@@ -8,6 +8,12 @@ the folder structure is
         -> stream_name.webp
         -> stream_name.date
 ```
+and a .env file
+
+```
+DATABASE_URL=postgres://user:password@IpOrDomain:port/pippadonations
+```
+
 
 the donations.json file is made using another one of my programs
 in another repo
