@@ -1,0 +1,16 @@
+this takes files in a git ignored folder /chat
+
+the folder structure is 
+```
+/chat
+    -> video_id
+        -> stream_name.donations.json
+        -> stream_name.webp
+        -> stream_name.date
+```
+
+the donations.json file is made using another one of my programs
+in another repo
+
+helper scripts can be found in scripts folder which is run inside
+the metadata folder that is created by download-info.sh

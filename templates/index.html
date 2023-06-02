@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+    <header>
+        <link rel="stylesheet" href="/static/tailwind.css">
+    </header>
+    <body class="p-4 w-[40rem]">
+        <h1 class="text-4xl ml-2">Welcome to the chat logs</h1>
+        <div class="mt-4">
+            <p>This is a collection of <span title="avalible chat logs for youtube streams/chat logs i download live before copyright strikes">all<span class="text-red-500">*</span></span> <a class="text-blue-600" href="https://www.youtube.com/c/PipkinPippa">pipkin pippa</a>'s <a class="text-blue-600" href="/streams">stream chats</a>.</p>
+            <p>So far this is only for pippa streams.</p>
+            <p>If you want an account to use to update the read status you will have to contact me on discord(winner#5393).<br> This is both to prevent trolls and bots <s>and not because i am lazy</s></p>
+            <p>This website is written entirely in <a class="text-blue-600" href="https://actix.rs/">actix</a> with <a class="text-blue-600" href="https://en.wikipedia.org/wiki/PostgreSQL">postgres</a> for the database</p>
+            <p>The superchats themselves are served in the http request but the read status is sent via <a class="text-blue-600" href="https://en.wikipedia.org/wiki/WebSocket">websockets</a> for instant updates to everyone.</p>
+        </div>
+        <br>
+        <div>
+            <h2>Instructions:</h2>
+            <p>
+                if you click on the username it is a link to the youtube channel of the user.<br>
+                if you click on the profile picture it is a link to the donation itself.<br>
+                if you want to update the read status of a superchat you will have to <a class="text-blue-600" href="/login">login</a>.<br>
+                after you have logged in you can click anywhere on a donation to change it's status.<br>
+            </p>
+        </div>
+        <br>
+        <p>ps. I am a backend developer so the ui looks horrible.</p>
+        <p>pps. If anyone wants to help make this look better contact me.</p>
+    </body>
+</html>

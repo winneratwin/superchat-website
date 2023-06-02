@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <link rel="stylesheet" href="/static/tailwind.css">
+        <script>
+            //  on page load
+            document.addEventListener("DOMContentLoaded", function() {
+
+                const form = document.getElementById('login-form');
+                form.addEventListener('submit', async (event) => {
+                    event.preventDefault();
+                    const username = document.getElementById('username').value;
+                    const password = document.getElementById('password').value;
+                    const response = await fetch('/login', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({ username, password })
+                    });
+                    const data = await response.json();
+                    if (data.success) {
+                        window.localStorage.setItem('token', data.token);
+                        window.localStorage.setItem('username', username);
+
+                        window.location.href = '/';
+                    } else {
+                        document.getElementById('error').innerText = data.reason;
+                    }
+                });
+            });
+        </script>
+    </head>
+    <body>
+        <form class="place-self-center m-5" method="POST" id="login-form">
+            <div class="mb-3">
+                <div class="mb-2">
+                    <label for="username">Username:</label>
+                    <input class="bg-gray-300 border-black border-2 rounded" type="text" id="username" name="username" required><br>
+                </div>
+                <div>
+                    <label for="password">Password:</label>
+                    <input class="bg-gray-300 border-black border-2 rounded" type="password" id="password" name="password" required><br>
+                </div>
+            </div>
+            <p id="error" class="mb-3 text-red-600"></p>
+            <input class="bg-gray-300 border-black border-2 p-1 rounded" type="submit" value="Submit">
+        </form>
+    </body>
+</html>

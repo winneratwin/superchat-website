@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <link rel="stylesheet" href="/static/tailwind.css">
+        <script>
+
+            function togglevisibility(query, el) {
+                for (const x of document.querySelectorAll(query)) 
+                {
+                    x.classList.toggle("togglehidden");
+                }
+            }
+            function toggleglobalvisibility(query, el) {
+                for (const x of document.querySelectorAll(query)) 
+                {
+                    x.classList.toggle("globalhidden");
+                }
+            }
+
+            function handleClick(cb) {
+                console.log("Clicked, new value = " + cb.checked);
+            }
+
+            // top is for unread messages
+            //bg-slate-900
+            // bottom is for read messages
+            //bg-green-500
+            let unselected_class="bg-stone-400"
+            let selected_class="bg-green-500"
+
+            window.addEventListener("load", async function() {
+                // on page load
+                connectWebSocket();
+
+                for (const x of document.getElementById("donations").children) 
+                {
+                    x.addEventListener("click", function(e) {
+                        // check if the tag wasn't a link
+                        // or if it had an onclick event
+                        // if it did then don't toggle the read status
+                        if (e.target.tagName == "A" || e.target.onclick != null) {
+                            return;
+                        }
+                        // check if the user is logged in
+                        if (window.localStorage.getItem('token') == null) {
+                            // if they aren't logged in then
+                            // don't toggle the read status
+                            return;
+                        }
+
+                        toggleReadStatus(x.id)
+                    });
+                }
+
+                {% for (header,body) in colors %}
+                    {% match header %}
+                    {% when 4279592384 -%}
+                    var el = document.getElementById("4279592384");
+                    el.getElementsByTagName('span')[0].style.display="inline";
+                    el.getElementsByTagName('input')[0].checked=true;
+                    {% when 4278237396 -%}
+                    var el = document.getElementById("4278237396");
+                    el.getElementsByTagName('span')[0].style.display="inline";
+                    el.getElementsByTagName('input')[0].checked=true;
+                    {% when 4278239141 -%}
+                    var el = document.getElementById("4278239141");
+                    el.getElementsByTagName('span')[0].style.display="inline";
+                    el.getElementsByTagName('input')[0].checked=true;
+                    {% when 4294947584 -%}
+                    var el = document.getElementById("4294947584");
+                    el.getElementsByTagName('span')[0].style.display="inline";
+                    el.getElementsByTagName('input')[0].checked=true;
+                    {% when 4293284096 -%}
+                    var el = document.getElementById("4293284096");
+                    el.getElementsByTagName('span')[0].style.display="inline";
+                    el.getElementsByTagName('input')[0].checked=true;
+                    {% when 4290910299 -%}
+                    var el = document.getElementById("4290910299");
+                    el.getElementsByTagName('span')[0].style.display="inline";
+                    el.getElementsByTagName('input')[0].checked=true;
+                    {% when 4291821568 -%}
+                    var el = document.getElementById("4291821568");
+                    el.getElementsByTagName('span')[0].style.display="inline";
+                    el.getElementsByTagName('input')[0].checked=true;
+                    {% else -%}
+                    console.log("unknown color {{header}}");
+                    {% endmatch -%}
+                {% endfor -%}
+                document.getElementById("gifted-toggle").getElementsByTagName('input')[0].checked=true;
+                document.getElementById("member-toggle").getElementsByTagName('input')[0].checked=true;
+                document.getElementById("donation-toggle").getElementsByTagName('input')[0].checked=true;
+                document.getElementById("sticker-toggle").getElementsByTagName('input')[0].checked=true;
+
+                var socket;
+                function connectWebSocket() {
+                    // connect to websocket
+                    socket = new WebSocket('wss://'+window.location.hostname+'/ws/{{video_id}}');
+                    // bind the onmessage function
+                    socket.onmessage = function(event) {
+                        //console.log('Received message:', event.data);
+                        let data = JSON.parse(event.data);
+
+                        if (data.donation_id != null){
+                            let el = document.getElementById(data.donation_id);
+                            if (data.is_read) {
+                                el.classList.remove(unselected_class);
+                                el.classList.add(selected_class);
+                                document.getElementById(`status-${data.donation_id}`).innerText = "Read";
+                            } else {
+                                el.classList.remove(selected_class);
+                                el.classList.add(unselected_class);
+                                document.getElementById(`status-${data.donation_id}`).innerText = "Unread";
+                            }
+                        } else if (data.status) {
+                            if (data.status != "success") {
+                                console.log("Error: " + data.message);
+                            }
+                        } else {
+                            console.log("Unknown message: " + data);
+                        }
+                    };
+
+                    socket.onerror = function(event) {
+                        console.log('WebSocket error: ', event);
+                    };
+
+                    socket.onopen = function(event) {
+                        console.log('WebSocket connection opened');
+                        
+                        // check if the user is logged in
+                        window.localStorage.getItem('token')
+                        if (window.localStorage.getItem('token') != null) {
+                            // if they are logged in send login request
+                            // over websocket
+                            socket.send(JSON.stringify({
+                                'username': window.localStorage.getItem('username'),
+                                // not actually a password, just the token
+                                // you get when you login
+                                'password': window.localStorage.getItem('token') 
+                            }));
+                        }
+                    };
+                    socket.onclose = function(event) {
+                        console.log('WebSocket connection closed');
+                        setTimeout(connectWebSocket, 3000);
+                    };
+                
+                }
+
+                // function to toggle the background color of the donation
+                // and set the localStorage item to true
+                function toggleReadStatus(donation_id) {
+                    /*
+                    // get the localStorage item
+                    var read_status = JSON.parse(localStorage.getItem("{{video_id}}"));
+                    // toggle the value
+                    let current_status = read_status[donation_id];
+                    read_status[donation_id] = !current_status;
+                    // set the localStorage item
+                    localStorage.setItem("{{video_id}}", JSON.stringify(read_status));
+
+                    // toggle the background color
+                    var donation = document.getElementById(donation_id);
+                    donation.classList.toggle(unselected_class);
+                    donation.classList.toggle(selected_class);
+                    // toggle the text
+                    var donation_status = document.getElementById(`status-${donation_id}`);
+                    if (current_status === false) {
+                        donation_status.innerText = "read";
+                    } else {
+                        donation_status.innerText = "unread";
+                    }*/
+                    // get element
+                    var donation = document.getElementById(donation_id);
+
+                    // check if the donation is already read'
+                    let status = donation.classList.contains(selected_class);
+                    let body = JSON.stringify({
+                        'donation_id': parseInt(donation_id),
+                        'is_read':!status 
+                    });
+                    socket.send(body);
+                }
+            });
+        </script>
+        <style>
+            input:checked+span {
+                --tw-bg-opacity: 1;
+                background-color: rgb(96 165 250 / var(--tw-bg-opacity));
+            }
+            input+span {
+                --tw-bg-opacity: 1;
+                background-color: rgb(248 113 113 / var(--tw-bg-opacity));
+            }
+            .globalhidden {
+                display: none;
+            }
+            .togglehidden {
+                display: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="mb-2 flex">
+            <div>
+                <h1 class="text-xl m-3">Donation category toggles:</h1>
+                <a class="m-2 p-2 bg-red-400 rounded-full" href="/streams">go back</a>
+            </div>
+            <div>
+                <div class="my-3">
+                    <label id="gifted-toggle">
+                        <input type="checkbox" onclick='toggleglobalvisibility(".gifted",this)' hidden>
+                        <span class="cursor-pointer my-2 p-2 rounded-full">gifted</span>
+                    </label>
+                    <label id="member-toggle">
+                        <input type="checkbox" onclick='toggleglobalvisibility(".member",this)' hidden>
+                        <span class="cursor-pointer my-2 p-2 rounded-full">members</span>
+                    </label>
+                    <label id="donation-toggle">
+                        <input type="checkbox" onclick='toggleglobalvisibility(".donation",this)' hidden>
+                        <span class="cursor-pointer my-2 p-2 rounded-full">donations</span>
+                    </label>
+                    <label id="sticker-toggle">
+                        <input type="checkbox" onclick='toggleglobalvisibility(".sticker",this)' hidden>
+                        <span class="cursor-pointer my-2 p-2 rounded-full">stickers</span>
+                    </label>
+                </div>
+                <p>dono value toggles:</p>
+                <div class="my-3">
+                    <label id="4279592384">
+                        <input type="checkbox" onclick='togglevisibility(".color-4279592384",this)' hidden>
+                        <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">blue</span>
+                    </label>
+                    <label id="4278237396">
+                        <input type="checkbox" onclick='togglevisibility(".color-4278237396",this)' hidden>
+                        <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">light blue</span>
+                    </label>
+                    <label id="4278239141">
+                        <input type="checkbox" onclick='togglevisibility(".color-4278239141",this)' hidden>
+                        <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">green</span>
+                    </label>
+                    <label id="4294947584">
+                        <input type="checkbox" onclick='togglevisibility(".color-4294947584",this)' hidden>
+                        <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">yellow</span>
+                    </label>
+                    <label id="4293284096">
+                        <input type="checkbox" onclick='togglevisibility(".color-4293284096",this)' hidden>
+                        <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">orange</span>
+                    </label>
+                    <label id="4290910299">
+                        <input type="checkbox" onclick='togglevisibility(".color-4290910299",this)' hidden>
+                        <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">pink</span>
+                    </label>
+                    <label id="4291821568">
+                        <input type="checkbox" onclick='togglevisibility(".color-4291821568",this)' hidden>
+                        <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">red</span>
+                    </label>
+                </div>
+            </div>
+        </div>
+        <hr class="h-1 bg-black"/>
+        <div id="donations" style="font-family: Roboto, Arial, sans-serif;word-wrap: break-word;">
+            {% for donation in donations %}
+                {% match donation %}
+                {% when DonationTypes::Donation with (Donation) %}
+                <div id={{ loop.index0 }} class="flex donation color-{{ Donation.header_color -}}" >
+                    <div class="w-[70px] m-2"> 
+                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
+                        <div>
+                            {{ Donation.time }}
+                        </div>
+                    </div>
+                    <div class="m-2 w-full" style="border-radius:5px;overflow:hidden;">
+                        {%- if let Some(ok) = Donation.message %}
+                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.header_color)) }}>
+                        {%- else -%}
+                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
+                        {%- endif -%}
+                            <div class="mr-4">
+                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Donation.thumbnail_url }} loading="lazy" />
+                            </div>
+                            <div>
+                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Donation.channel_id) }}>
+                                    {{ Donation.username }}
+                                </a>
+                                <div>
+                                    {{ Donation.amount }}
+                                </div>
+                            </div>
+                        </div>
+                        {% if let Some(ok) = Donation.message -%}
+                        <div class="py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
+                            {{ ok }}
+                        </div>
+                        {%- endif %}
+                    </div>
+                </div>
+
+                {% when DonationTypes::Membership with (Membership) %}
+                <div id={{ loop.index0 }} class="flex member">
+                    <div class="w-[70px] m-2"> 
+                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
+                        <div>
+                            {{ Membership.time }}
+                        </div>
+                    </div>
+                    <div id="{{ loop.index0 }}" class="m-2 w-full" style="border-radius:5px;overflow:hidden;">
+                        {%- if let Some(ok) = Membership.message %}
+                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.header_color)) }}>
+                        {%- else %}
+                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
+                        {%- endif %}
+                            <div class="mr-4">
+                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Membership.thumbnail_url }} loading="lazy" />
+                            </div>
+                            <div>
+                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Membership.channel_id) }}>
+                                    {{
+                                        Membership.username
+                                    }}
+                                </a>
+                                <div>
+                                    {{
+                                        Membership.months
+                                    }}
+                                </div>
+                            </div>
+                        </div>
+                        {% if let Some(ok) = Membership.message -%}
+                        <div class="py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
+                            {{ ok }}
+                        </div>
+                        {%- endif %}
+                    </div>
+                </div>
+
+                {% when DonationTypes::GiftMembership with (Redemption) %}
+                <div id={{ loop.index0 }} class="flex gifted">
+                    <div class="w-[70px] m-2"> 
+                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
+                        <div>
+                            {{ Redemption.time }}
+                        </div>
+                    </div>
+                    <div class="flex m-2 my-2">
+                        <img onclick={{"location.href='#{}';"|format(loop.index0)}} style="margin-right:14px" class="rounded-full w-[24px] h-[24px] cursor-pointer" src={{Redemption.thumbnail_url}} loading="lazy"/>
+                        <div class="align-middle">
+                            <span class="" style="color:rgb(43, 166, 64)">{{Redemption.username}}</span>
+                            <i> was gifted a membership by 
+                                <b>{{Redemption.sender}}</b>
+                            </i>
+                        </div>
+                    </div>
+                </div>
+
+                {% when DonationTypes::GiftingMembership with (Gift) %}
+                <div id={{ loop.index0 }} class="flex gifted">
+                    <div class="w-[70px] m-2"> 
+                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
+                        <div>
+                            n/a
+                        </div>
+                    </div>
+                    <div class="m-2 my-2 w-full" style="border-radius:5px;overflow:hidden;">
+                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Gift.body_color)) }}>
+                            <div class="mr-4">
+                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Gift.thumbnail_url }} loading="lazy" />
+                            </div>
+                            <div>
+                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Gift.channel_id) }}>
+                                    {{
+                                        Gift.username
+                                    }}
+                                </a>
+                                <div>
+                                    {{
+                                        format!("gifted {} membership(s)",Gift.number)
+                                    }}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                {% when DonationTypes::Sticker with (Sticker) %}
+                <div id={{ loop.index0 }} class="flex sticker color-{{ Sticker.header_color -}}">
+                    <div class="w-[70px] m-2"> 
+                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
+                        <div>
+                            {{
+                                Sticker.time
+                            }}
+                        </div>
+                    </div>
+                    <div class="m-2 my-2 w-full" style="border-radius:5px;overflow:hidden;">
+                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Sticker.header_color)) }}>
+                            <div class="mr-4">
+                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{Sticker.thumbnail_url}} loading="lazy" />
+                            </div>
+                            <div class="mr-4">
+                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Sticker.channel_id) }}>
+                                    {{
+                                        Sticker.username
+                                    }}
+                                </a>
+                                <div>
+                                    {{
+                                        Sticker.sticker_cost
+                                    }}
+                                </div>
+                            </div>
+                            <img src="{{ "https:{}"|format(Sticker.sticker_image_url) }}" class="ml-auto w-[72px] h-[72px]" alt="{{ Sticker.sticker_description }}" loading="lazy" />
+                        </div>
+                    </div>
+                </div>
+
+                {% else %}
+                <p>TYPE OF DONATION NOT IMPLEMENTED THIS SHOULDN'T HAPPEN PLEASE NOTIFY ME ON DISCORD</p> 
+                {% endmatch %}
+            {% endfor -%}
+        </div>
+        <hr class="h-1 bg-black"/>
+        <div class="my-4">
+            <a class="m-2 p-2 bg-red-400 rounded-full" href="/streams">go back</a>
+        </div>
+    </body>
+</html>

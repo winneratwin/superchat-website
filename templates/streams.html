@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="en">
+	<header>
+		<link rel="stylesheet" href="/static/tailwind.css">
+	</header>
+	<body>
+		<div class="m-3">
+			<p class="place-self-center">Streams</p>
+			<a class="ml-auto p-1 rounded bg-slate-500 border-black border-2" href="/logout">login</a>
+		</div>
+		<div id="streams">
+			{%- for s in streams %}
+				<div class="flex m-2">
+					<img class="mr-3" width="168px" height="94px" src="{{ s.thumbnail }}" loading="lazy"/>
+					<a href="{{ s.link }}">{{ s.title }}</a>
+				</div>
+			{% endfor -%}
+		</div>
+	</body>
+</html>

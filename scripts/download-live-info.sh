@@ -1,0 +1,2 @@
+yt-dlp --download-archive archive.txt --write-info-json --write-description --write-thumbnail --skip-download --ignore-no-formats -o "live/%(id)s/%(title)s.%(ext)s" "https://www.youtube.com/@PipkinPippa/live"
+yt-dlp --download-archive archive.txt --force-write-archive --skip-download --write-subs --ignore-no-formats -o "live/%(id)s/%(title)s.%(ext)s" "https://www.youtube.com/@PipkinPippa/live" > log.txt
