@@ -90,6 +90,7 @@
                 document.getElementById("member-toggle").getElementsByTagName('input')[0].checked=true;
                 document.getElementById("donation-toggle").getElementsByTagName('input')[0].checked=true;
                 document.getElementById("sticker-toggle").getElementsByTagName('input')[0].checked=true;
+                document.getElementById("read-toggle").getElementsByTagName('input')[0].checked=true;
 
                 var socket;
                 function connectWebSocket() {
@@ -182,6 +183,16 @@
                     socket.send(body);
                 }
             });
+
+            function toggleRead(el) {
+                let style = document.getElementById("hideread");
+                // set inner html to
+                let str = ".bg-green-500 {display: none;}"
+                if (el.checked) {
+                    str = ""
+                }
+                style.innerHTML = str;
+            }
         </script>
         <style>
             input:checked+span {
@@ -199,6 +210,7 @@
                 display: none;
             }
         </style>
+        <style id="hideread"></style>
     </head>
     <body>
         <div class="mb-2 flex">
@@ -223,6 +235,10 @@
                     <label id="sticker-toggle">
                         <input type="checkbox" onclick='toggleglobalvisibility(".sticker",this)' hidden>
                         <span class="cursor-pointer my-2 p-2 rounded-full">stickers</span>
+                    </label>
+                    <label id="read-toggle">
+                        <input type="checkbox" onclick='toggleRead(this)' hidden>
+                        <span class="cursor-pointer my-2 p-2 rounded-full">read</span>
                     </label>
                 </div>
                 <p>dono value toggles:</p>

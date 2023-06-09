@@ -1,5 +1,7 @@
 this takes files in a git ignored folder /chat
 
+an instance is hosted on my [website](https://pippasupers.codecoffin.com)
+
 the folder structure is 
 ```
 /chat
