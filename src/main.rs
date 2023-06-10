@@ -338,6 +338,25 @@ impl Handler<GetDonations> for ChatServer {
 	type Result = ();
 
 	fn handle(&mut self, msg: GetDonations, _ctx: &mut Self::Context) -> Self::Result {
+
+		// check if it has already been queried
+		// we store the results from the database in the actor
+		// so we don't have to query the database every time
+		// we want to get the donations. we only insert new
+		// into the database on update
+		
+		// check self.read_status to see if there is an entry
+		// if there is, send it to the client
+		// if there isn't, query the database
+		if let Some(res) = self.read_status.get(&msg.chat_name) {
+			//println!("sending donations from cache");
+			for (id,status) in res.iter().enumerate() {
+				msg.addr.do_send(ReadUpdate{ donation_id: id as i32, is_read: *status, video_id: msg.chat_name.clone() });
+			}
+			return;
+		}
+
+
 		// get donations
 		// do a database query 
 		let mut pool = self.pool.get().unwrap();
@@ -352,9 +371,13 @@ impl Handler<GetDonations> for ChatServer {
 		if exists {
 			for donations in videos {
 				let list:Value = serde_json::from_str(donations.value.as_str()).expect("database corruption");
+				let list = list.as_array().unwrap().into_iter().map(|x| x.as_bool().unwrap()).collect::<Vec<bool>>();
 				
-				for (i,x) in list.as_array().unwrap().iter().enumerate() {
-					msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: x.as_bool().unwrap(), video_id: msg.chat_name.clone() });
+				// cache the results
+				self.read_status.insert(msg.chat_name.clone(),list.clone());
+				
+				for (i,x) in list.iter().enumerate() {
+					msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *x, video_id: msg.chat_name.clone() });
 				}
 			}
 		} else {
@@ -367,6 +390,9 @@ impl Handler<GetDonations> for ChatServer {
 			// create empty list with default value of false
 			// with length of numbers of donations
 			let list = vec![false;donations_file];
+
+			// cache the results
+			self.read_status.insert(msg.chat_name.clone(),list.clone());
 
 			// write to database
 			diesel::insert_into(schema::video_donation_status::table)
@@ -500,7 +526,8 @@ use std::collections::HashMap;
 // Define the server actor
 struct ChatServer {
     rooms: HashMap<String, Vec<Addr<MyWebSocket>>>,
-	pool: Pool<ConnectionManager<PgConnection>>
+	pool: Pool<ConnectionManager<PgConnection>>,
+	read_status: HashMap<String, Vec<bool>>,
 }
 
 impl Actor for ChatServer {
@@ -525,42 +552,39 @@ impl Handler<ReadUpdate> for ChatServer {
 	type Result = ();
 
 	fn handle(&mut self, msg: ReadUpdate, _ctx: &mut Self::Context) -> Self::Result {
-		use crate::schema::video_donation_status::dsl::*;
-		let mut pool = self.pool.get().unwrap();
 		// get current read status
-		let res = schema::video_donation_status::table
-			.filter(id.eq(&msg.video_id))
-			.load::<models::VideoDonationStatus>(&mut pool)
-			.expect("Error loading video_donation_status");
+		if let Some(status) = self.read_status.get(&msg.video_id) {
+			let mut pool = self.pool.get().unwrap();
 
-		// get the first element
-		let status = res.first().unwrap().clone();
-		// convert to json
-		let json = &status.value.parse::<serde_json::Value>().unwrap();
-		// parse as list
-		let mut list = json.as_array().unwrap().clone();
-		// change the read status at position donation_id
-		list[msg.donation_id as usize] = serde_json::Value::Bool(msg.is_read);
-		// convert back to string
-		let new_value = serde_json::to_string(&list).unwrap();
-		
+			// change the status
+			let mut status = status.clone();
+			status[msg.donation_id as usize] = msg.is_read;
+			self.read_status.insert(msg.video_id.clone(), status.clone());
 
-		// update the database
-		let _res = diesel::update(schema::video_donation_status::table)
-			.filter(id.eq(&msg.video_id))
-			.set(value.eq(&new_value))
-			.get_result::<models::VideoDonationStatus>(&mut pool)
-			.expect("Error updating video_donation_status");
-
-
-		// send the message to all clients in the room
-		if let Some(room) = self.rooms.get_mut(&msg.video_id) {
-			for addr in room {
-				addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone() });
+			// update other clients
+			if let Some(room) = self.rooms.get_mut(&msg.video_id) {
+				for addr in room {
+					addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone() });
+				}
+			} else {
+				println!("room not found someow. this should not happen");
 			}
+
+			// update the database
+			let serialized = serde_json::to_string(&status).unwrap();
+			use crate::schema::video_donation_status::dsl::*;
+	
+			
+			let _res = diesel::update(schema::video_donation_status::table)
+				.filter(id.eq(&msg.video_id))
+				.set( value.eq(serialized))
+				.get_result::<models::VideoDonationStatus>(&mut pool)
+				.expect("Error updating video_donation_status");
+
 		} else {
-			println!("room not found someow this should not happen");
-		}
+			println!("client sent update for video not cached");
+			return;
+		};
 	}
 }
 
@@ -707,7 +731,7 @@ async fn main() -> std::io::Result<()> {
 
 
     // Create the chat server instance
-    let server = ChatServer { rooms: HashMap::new(), pool: pool.clone() }.start();
+    let server = ChatServer { rooms: HashMap::new(), pool: pool.clone(), read_status: HashMap::new() }.start();
 
 	// wrap the database pool in a container
 	let db_container: Pool<ConnectionManager<PgConnection>> = pool.clone();
