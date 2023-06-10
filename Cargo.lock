@@ -1288,7 +1288,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "superchat-extractor-web-two"
+name = "superchat-extractor-web"
 version = "0.1.0"
 dependencies = [
  "actix",
