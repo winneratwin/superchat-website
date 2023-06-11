@@ -26,3 +26,16 @@ pub struct VideoDonationStatus {
     pub id: String,
     pub value: String,
 }
+
+#[derive(Queryable, Selectable, Debug)]
+#[diesel(table_name = crate::schema::read_status_change_log)]
+#[diesel(check_for_backend(diesel::pg::Pg))]
+pub struct ReadStatusChangeLog {
+    pub id: i32,
+    pub timestamp: SystemTime,
+    pub username: String,
+    pub video_id: String,
+    pub donation_id: i32,
+    pub previous_status: bool,
+    pub new_status: bool,
+}

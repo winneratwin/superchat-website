@@ -290,7 +290,7 @@
                         {%- if let Some(ok) = Donation.message %}
                         <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.header_color)) }}>
                         {%- else -%}
-                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
+                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
                         {%- endif -%}
                             <div class="mr-4">
                                 <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Donation.thumbnail_url }} loading="lazy" />
@@ -324,7 +324,7 @@
                         {%- if let Some(ok) = Membership.message %}
                         <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.header_color)) }}>
                         {%- else %}
-                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
+                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
                         {%- endif %}
                             <div class="mr-4">
                                 <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Membership.thumbnail_url }} loading="lazy" />
@@ -374,11 +374,11 @@
                     <div class="w-[70px] m-2"> 
                         <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
                         <div>
-                            n/a
+                            {{ Gift.time }}
                         </div>
                     </div>
-                    <div class="m-2 my-2 w-full" style="border-radius:5px;overflow:hidden;">
-                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Gift.body_color)) }}>
+                    <div class="m-2 my-2 w-full">
+                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Gift.body_color)) }}>
                             <div class="mr-4">
                                 <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Gift.thumbnail_url }} loading="lazy" />
                             </div>
@@ -408,8 +408,8 @@
                             }}
                         </div>
                     </div>
-                    <div class="m-2 my-2 w-full" style="border-radius:5px;overflow:hidden;">
-                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Sticker.header_color)) }}>
+                    <div class="m-2 my-2 w-full">
+                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Sticker.header_color)) }}>
                             <div class="mr-4">
                                 <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{Sticker.thumbnail_url}} loading="lazy" />
                             </div>

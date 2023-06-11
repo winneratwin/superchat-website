@@ -162,6 +162,7 @@ struct Gift {
 	username: String,
 	channel_id: String,
 	number: String,
+	time: String,
 	header_color: i64,
 	body_color: i64,
 	thumbnail_url: String,
@@ -259,7 +260,7 @@ async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<String>,
 	// print chat name
 	let chat_name = path.into_inner();
 	//println!("chat name: {}",chat_name);
-	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now() };
+	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new() };
 
     let resp = ws::start(actor, &r, stream);
     resp
@@ -324,6 +325,8 @@ struct MyWebSocket {
 	addr: Addr<ChatServer>,
 	room: String,
 	is_user: bool,
+	username: String,
+	// heartbeat
 	hb: Instant,
 }
 
@@ -351,7 +354,7 @@ impl Handler<GetDonations> for ChatServer {
 		if let Some(res) = self.read_status.get(&msg.chat_name) {
 			//println!("sending donations from cache");
 			for (id,status) in res.iter().enumerate() {
-				msg.addr.do_send(ReadUpdate{ donation_id: id as i32, is_read: *status, video_id: msg.chat_name.clone() });
+				msg.addr.do_send(ReadUpdate{ donation_id: id as i32, is_read: *status, video_id: msg.chat_name.clone(), username: String::new() });
 			}
 			return;
 		}
@@ -377,7 +380,7 @@ impl Handler<GetDonations> for ChatServer {
 				self.read_status.insert(msg.chat_name.clone(),list.clone());
 				
 				for (i,x) in list.iter().enumerate() {
-					msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *x, video_id: msg.chat_name.clone() });
+					msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *x, video_id: msg.chat_name.clone(), username: String::new() });
 				}
 			}
 		} else {
@@ -406,7 +409,7 @@ impl Handler<GetDonations> for ChatServer {
 			// loop through donations
 			for (i,v) in list.iter().enumerate() {
 				// send update to client
-				msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *v, video_id: msg.chat_name.clone() });
+				msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *v, video_id: msg.chat_name.clone(), username: String::new() });
 			}
 		}
 	}
@@ -545,6 +548,7 @@ struct ReadUpdate {
 	donation_id:i32,
 	is_read:bool,
 	video_id:String,
+	username:String,
 }
 
 // implement a message handler for the server actor
@@ -558,29 +562,56 @@ impl Handler<ReadUpdate> for ChatServer {
 
 			// change the status
 			let mut status = status.clone();
+			let previous_read_status = status[msg.donation_id as usize];
 			status[msg.donation_id as usize] = msg.is_read;
 			self.read_status.insert(msg.video_id.clone(), status.clone());
+			
 
 			// update other clients
 			if let Some(room) = self.rooms.get_mut(&msg.video_id) {
 				for addr in room {
-					addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone() });
+					addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone(), username: String::new() });
 				}
 			} else {
 				println!("room not found someow. this should not happen");
 			}
 
-			// update the database
-			let serialized = serde_json::to_string(&status).unwrap();
-			use crate::schema::video_donation_status::dsl::*;
+			{ // own namespace to prevent overlap of id variable names
+				use crate::schema::read_status_change_log::dsl::*;
 	
-			
-			let _res = diesel::update(schema::video_donation_status::table)
-				.filter(id.eq(&msg.video_id))
-				.set( value.eq(serialized))
-				.get_result::<models::VideoDonationStatus>(&mut pool)
-				.expect("Error updating video_donation_status");
+				// log change to read_status_change_log
+				// need: timestamp, username, video_id, donation_id, previous_status, new_status
+				// username is msg.username
+				// video_id is msg.video_id
+				// donation_id is msg.donation_id
+				// previous_status is previous_read_status
+				// new_status is msg.is_read
+				// timestamp is SystemTime::now()
+	
+	
+				let _res = diesel::insert_into(read_status_change_log)
+					.values((
+						username.eq(&msg.username),
+						video_id.eq(&msg.video_id),
+						donation_id.eq(&msg.donation_id),
+						previous_status.eq(&previous_read_status),
+						new_status.eq(&msg.is_read),
+						timestamp.eq(SystemTime::now()),
+					))
+					.get_result::<models::ReadStatusChangeLog>(&mut pool)
+					.expect("Error inserting into read_status_change_log");	
+			}
+			{
+				// update the database
+				let serialized = serde_json::to_string(&status).unwrap();
 
+				use crate::schema::video_donation_status::dsl::*;
+				let _res = diesel::update(schema::video_donation_status::table)
+					.filter(id.eq(&msg.video_id))
+					.set( value.eq(serialized))
+					.get_result::<models::VideoDonationStatus>(&mut pool)
+					.expect("Error updating video_donation_status");
+			}
 		} else {
 			println!("client sent update for video not cached");
 			return;
@@ -621,6 +652,7 @@ struct Authentication {
 #[rtype(result = "()")]
 struct AuthenticationToClient {
 	exists:bool,
+	username:Option<String>
 }
 
 
@@ -640,10 +672,14 @@ impl Handler<Authentication> for ChatServer {
 
 		//println!("results: {:?}",results);
 
-		let exists = results.len() > 0;
+		if let Some(result) = results.first() {
+			// send the message to the client
+			msg.addr.do_send(AuthenticationToClient { exists: true, username: Some(result.username.clone()) })
+		} else{
+			// send the message to the client
+			msg.addr.do_send(AuthenticationToClient { exists: false, username: None })
+		}
 
-		// send the message to the client
-		msg.addr.do_send(AuthenticationToClient { exists: exists })
 	}
 }
 
@@ -653,6 +689,10 @@ impl Handler<AuthenticationToClient> for MyWebSocket {
 	fn handle(&mut self, msg: AuthenticationToClient, ctx: &mut Self::Context) -> Self::Result {
 		self.is_user = msg.exists;
 		if msg.exists {
+			// set username
+			self.username = msg.username.unwrap().clone();
+
+			// send success message
 			ctx.text(json!({"status":"success","message":"authenticated"}).to_string());
 		} else {
 			ctx.text(json!({"status":"error","message":"not authenticated"}).to_string());
@@ -686,7 +726,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWebSocket {
 						return;
 					}
 					// send the message to the server
-					self.addr.do_send(ReadUpdate { donation_id: contents.donation_id, is_read: contents.is_read, video_id: self.room.clone() });
+					self.addr.do_send(ReadUpdate { donation_id: contents.donation_id, is_read: contents.is_read, video_id: self.room.clone(), username: self.username.clone() });
 				} else if let Ok(contents) = serde_json::from_str::<AuthenticationContents>(&text) {
 					// send the message to the server
 					self.addr.do_send(Authentication { username: contents.username, password: contents.password, addr: ctx.address() });
