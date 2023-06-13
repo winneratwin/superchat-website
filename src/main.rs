@@ -33,8 +33,14 @@ struct StreamsTemplate<'a> {
 }
 
 
+#[derive(Template)]
+#[template(path = "streamers.html")]
+struct ChannelsTemplate {
+	channels: Vec<String>,
+}
+
 #[get("/streams")]
-async fn streams() -> impl Responder {
+async fn streamers() -> impl Responder {
 	let mut out = Vec::new();
 	// loop over chats directory
 	let paths: Vec<_> = std::fs::read_dir("./chats").expect("Unable to read chat directory")
@@ -52,8 +58,35 @@ async fn streams() -> impl Responder {
 		// get folder_name
 		let folder_name = path.file_name().expect("failed to read filename").to_str().expect("failed to convert filename to str").to_string();
 
+		out.push(folder_name);
+	}
+	let template = ChannelsTemplate{channels: out};
+	template.to_response()
+}
+
+
+
+#[get("/streams/{channel_name}")]
+async fn streams(channel_name: web::Path<String>) -> impl Responder {
+	let mut out = Vec::new();
+	// loop over chats directory
+	let paths: Vec<_> = std::fs::read_dir(format!("./chats/{channel_name}")).expect("Unable to read chat directory")
+		.map(|r| r.unwrap())
+		.collect();
+	for file in paths {
+		// check if file is a directory
+		if !file.file_type().expect("failed to read filetype").is_dir() {
+			continue;
+		}
+
+		// convert to std::Path
+		let path = file.path();
+
+		// get folder_name
+		let folder_name = path.file_name().expect("failed to read filename").to_str().expect("failed to convert filename to str").to_string();
+
 		// get thumbnail
-		let thumbnail = glob(&format!("./chats/{}/*.webp",folder_name)).expect("Failed to read thumbnail").next().expect("Failed to read thumbnail").expect("Failed to read thumbnail");
+		let thumbnail = glob(&format!("./chats/{channel_name}/{}/*.webp",folder_name)).expect("Failed to read thumbnail").next().expect("Failed to read thumbnail").expect("Failed to read thumbnail");
 		let thumbnail_filename = thumbnail.as_path().file_name().expect("Failed to read thumbnail").to_str().expect("Failed to convert thumbnail to str").to_string();
 		use urlencoding::encode;
 		let thumbnail_filename = encode(&thumbnail_filename).into_owned();
@@ -61,7 +94,7 @@ async fn streams() -> impl Responder {
 		let stream_name = thumbnail.file_stem().expect("Failed to read file name").to_str().expect("Failed to convert file name to str").to_string();
 		
 		// get 
-		let date_file_path = format!{"./chats/{}/{}.date",folder_name,stream_name};
+		let date_file_path = format!{"./chats/{channel_name}/{}/{}.date",folder_name,stream_name};
 		let date_file = std::path::Path::new(&date_file_path);
 
 		// parse date_file as i64
@@ -75,8 +108,8 @@ async fn streams() -> impl Responder {
 		*/
 		let res = Stream{
 			title: stream_name,
-			thumbnail: format!{"/files/{}/{}",folder_name,thumbnail_filename},
-			link: format!("/chat/{}",folder_name),
+			thumbnail: format!{"/files/{channel_name}/{}/{}",folder_name,thumbnail_filename},
+			link: format!("/chat/{channel_name}/{}",folder_name),
 			date_released: date_released_string,
 		};
 		out.push(res);
@@ -195,15 +228,15 @@ struct DonationsTemplate {
 	video_id: String,
 }
 
-#[get("/chat/{chat_name}")]
-async fn chat(path: web::Path<String>) -> impl Responder {
+#[get("/chat/{channel_name}/{chat_name}")]
+async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 	// print chat name
 	
-	let chat_name = path.into_inner();
+	let (channel_name,chat_name) = path.into_inner();
 	//println!("chat name: {}",chat_name);
 
 	// check if chat exists
-	let chat_path = format!("./chats/{}",chat_name);
+	let chat_path = format!("./chats/{channel_name}/{chat_name}");
 	if !std::path::Path::new(&chat_path).exists() {
 		return HttpResponse::NotFound().body("<main>
 	<div class=\"m-2\">
@@ -215,7 +248,7 @@ async fn chat(path: web::Path<String>) -> impl Responder {
 	}
 	// get donations file
 	// ends in .donations.json
-	let donations_file = glob(&format!("./chats/{}/*.donations.json",chat_name)).expect("Failed to read donations file").next().expect("Failed to read donations file").expect("Failed to read donations file");
+	let donations_file = glob(&format!("./chats/{channel_name}/{chat_name}/*.donations.json")).expect("Failed to read donations file").next().expect("Failed to read donations file").expect("Failed to read donations file");
 	// read donations file
 	let donations_file = std::fs::read_to_string(donations_file).expect("Failed to read donations file");
 
@@ -387,7 +420,7 @@ impl Handler<GetDonations> for ChatServer {
 			//println!("donations not found in database");
 
 			// get donations file
-			let donations_file = glob(&format!("./chats/{}/*.donations.json",msg.chat_name)).expect("Failed to read donations file").next().expect("Failed to read donations file").expect("Failed to read donations file");
+			let donations_file = glob(&format!("./chats/*/{}/*.donations.json",msg.chat_name)).expect("Failed to read donations file").next().expect("Failed to read donations file").expect("Failed to read donations file");
 			// read donations file
 			let donations_file = std::fs::read_to_string(donations_file).expect("Failed to read donations file").lines().count();
 			// create empty list with default value of false
@@ -523,7 +556,6 @@ impl Handler<RemoveFromRoom> for ChatServer {
         }
     }
 }
-
 
 use std::collections::HashMap;
 // Define the server actor
@@ -785,6 +817,7 @@ async fn main() -> std::io::Result<()> {
 			.service(chat)
 			.service(login)
 			.service(login_page)
+			.service(streamers)
 			.service(ws_index)
 			.service(fs::Files::new("/files", "./chats"))
 			.service(fs::Files::new("/static", "./static"))
