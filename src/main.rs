@@ -608,6 +608,7 @@ impl Handler<ReadUpdate> for ChatServer {
 				println!("room not found someow. this should not happen");
 			}
 
+			std::thread::spawn(move || {
 			{ // own namespace to prevent overlap of id variable names
 				use crate::schema::read_status_change_log::dsl::*;
 	
@@ -620,7 +621,7 @@ impl Handler<ReadUpdate> for ChatServer {
 				// new_status is msg.is_read
 				// timestamp is SystemTime::now()
 	
-	
+				
 				let _res = diesel::insert_into(read_status_change_log)
 					.values((
 						username.eq(&msg.username),
@@ -643,7 +644,7 @@ impl Handler<ReadUpdate> for ChatServer {
 					.set( value.eq(serialized))
 					.get_result::<models::VideoDonationStatus>(&mut pool)
 					.expect("Error updating video_donation_status");
-			}
+			}});
 		} else {
 			println!("client sent update for video not cached");
 			return;
