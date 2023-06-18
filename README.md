@@ -5,10 +5,11 @@ an instance is hosted on my [website](https://pippasupers.codecoffin.com)
 the folder structure is 
 ```
 /chat
-    -> video_id
-        -> stream_name.donations.json
-        -> stream_name.webp
-        -> stream_name.date
+    -> channel
+        -> video_id
+            -> stream_name.donations.json
+            -> stream_name.webp
+            -> stream_name.date
 ```
 and a .env file
 
