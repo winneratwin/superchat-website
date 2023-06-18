@@ -37,6 +37,7 @@ struct StreamsTemplate<'a> {
 #[template(path = "streamers.html")]
 struct ChannelsTemplate {
 	channels: Vec<String>,
+	streams: Vec<(String,String)>,
 }
 
 #[get("/streams")]
@@ -60,7 +61,18 @@ async fn streamers() -> impl Responder {
 
 		out.push(folder_name);
 	}
-	let template = ChannelsTemplate{channels: out};
+
+	// get streams
+	let files = glob(&format!("./live/*.donations.json")).expect("Failed to read glob pattern");
+	// convert to strings
+	let stream_names: Vec<String> = files.map(|r| r.unwrap().file_name().unwrap().to_str().unwrap().to_string()).collect();
+	// remove file extension
+	let stream_names = stream_names.iter().map(|s| s.replace(".donations.json","")).collect::<Vec<String>>();
+	use urlencoding::encode;
+	let stream_names = stream_names.iter().map(|s| (s.to_owned(),encode(s).into_owned())).collect::<Vec<(String,String)>>();
+
+
+	let template = ChannelsTemplate{channels: out, streams: stream_names};
 	template.to_response()
 }
 
@@ -68,7 +80,7 @@ async fn streamers() -> impl Responder {
 
 #[get("/streams/{channel_name}")]
 async fn streams(channel_name: web::Path<String>) -> impl Responder {
-	let mut out = Vec::new();
+	let mut out: Vec<Stream> = Vec::new();
 	// loop over chats directory
 	let paths: Vec<_> = std::fs::read_dir(format!("./chats/{channel_name}")).expect("Unable to read chat directory")
 		.map(|r| r.unwrap())
@@ -118,7 +130,6 @@ async fn streams(channel_name: web::Path<String>) -> impl Responder {
 	// sort by date released desc
 	out.sort_by(|a,b| b.date_released.cmp(&a.date_released));
 	
-
 	let template = StreamsTemplate { streams: &out };
 	template.to_response()
 }
@@ -139,7 +150,7 @@ fn toargb(number:i64) -> String {
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Donation {
 	username: String,
 	channel_id: String,
@@ -151,7 +162,7 @@ struct Donation {
 	thumbnail_url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 struct Membership {
 	username: String,
@@ -164,7 +175,7 @@ struct Membership {
 	thumbnail_url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Redemption {
 	thumbnail_url: String,
 	username: String,
@@ -176,7 +187,7 @@ struct Redemption {
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Sticker {
 	username: String,
 	channel_id: String,
@@ -190,7 +201,7 @@ struct Sticker {
 }
 
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 struct Gift {
 	username: String,
 	channel_id: String,
@@ -201,7 +212,7 @@ struct Gift {
 	thumbnail_url: String,
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(tag = "type")]
 enum DonationTypes {
 	Donation(Donation),
@@ -234,6 +245,28 @@ async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 	
 	let (channel_name,chat_name) = path.into_inner();
 	//println!("chat name: {}",chat_name);
+
+	// if channel_name is live then chat_name is the video_name
+	if channel_name == "live" {
+		// check for chat_name.donations.json
+		let donations_file = format!("./live/{}.donations.json", chat_name);
+		if !std::path::Path::new(&donations_file).exists() {
+			return HttpResponse::NotFound().body("
+			<main>
+				<div class=\"m-2\">
+					<h1 class=\"text-2xl\">Error</h1>
+					<p>Failed to read donations file</p>
+					<p>might not exist on the server</p>
+				</div>
+			</main>");
+		};
+
+		let donations = Vec::new();
+		let donations_colors = Vec::new();
+		use urlencoding::encode;
+		let template = DonationsTemplate { donations: donations, colors: donations_colors, video_id: format!("live-{}",encode(&chat_name)) };
+		return template.to_response()
+	}
 
 	// check if chat exists
 	let chat_path = format!("./chats/{channel_name}/{chat_name}");
@@ -375,6 +408,22 @@ impl Handler<GetDonations> for ChatServer {
 	type Result = ();
 
 	fn handle(&mut self, msg: GetDonations, _ctx: &mut Self::Context) -> Self::Result {
+
+		// check if it is a live stream by checking if it begins
+		// with live-
+		if msg.chat_name.starts_with("live-") {
+			// get donations from self.live_donations and the corresponding
+			// read status from self.read_status
+			if let Some(res) = self.live_donations.get(&msg.chat_name) {
+				if let Some(status) = self.read_status.get(&msg.chat_name) {
+					//println!("sending donations from cache");
+					for (id,donation) in res.iter().enumerate() {
+						msg.addr.do_send(NewMessageForClient{ donation_id: id as i32, donation: donation.clone(), read_status: status[id] });
+					}
+					return;
+				}
+			}
+		}
 
 		// check if it has already been queried
 		// we store the results from the database in the actor
@@ -521,7 +570,7 @@ impl Handler<AddToRoom> for ChatServer {
         let room = self.rooms.entry(msg.chat_name.clone()).or_insert(HashMap::new());
 
         // Add the WebSocket actor to the room
-        room.insert(msg.id,msg.addr);
+        room.insert(msg.id,WebsocketClient { addr: msg.addr, num_sent: 0 });
     }
 }
 
@@ -537,6 +586,7 @@ impl Handler<RemoveFromRoom> for ChatServer {
     type Result = ();
 
     fn handle(&mut self, msg: RemoveFromRoom, _ctx: &mut Self::Context) -> Self::Result {
+		println!("adding to room: {}",msg.chat_name);
         // Get the list of WebSocket actors for the specified room
         if let Some(room) = self.rooms.get_mut(&msg.chat_name) {
 			// remove the WebSocket actor from the hash map
@@ -547,12 +597,19 @@ impl Handler<RemoveFromRoom> for ChatServer {
     }
 }
 
+
+struct WebsocketClient {
+	addr: Addr<MyWebSocket>,
+	num_sent: usize,
+}
+
 use std::collections::HashMap;
 // Define the server actor
 struct ChatServer {
-    rooms: HashMap<String, HashMap<String, Addr<MyWebSocket>>>,
+    rooms: HashMap<String, HashMap<String, WebsocketClient>>,
 	pool: Pool<ConnectionManager<PgConnection>>,
 	read_status: HashMap<String, Vec<bool>>,
+	live_donations: HashMap<String, Vec<DonationTypes>>
 }
 
 impl Actor for ChatServer {
@@ -591,8 +648,8 @@ impl Handler<ReadUpdate> for ChatServer {
 
 			// update other clients
 			if let Some(room) = self.rooms.get_mut(&msg.video_id) {
-				for addr in room.values() {
-					addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone(), username: String::new() });
+				for client in room.values() {
+					client.addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone(), username: String::new() });
 				}
 			} else {
 				println!("room not found someow. this should not happen");
@@ -692,7 +749,6 @@ impl Handler<Authentication> for ChatServer {
 			.filter(token.eq(&msg.password))
 			.load::<models::SessionToken>(&mut conn)
 			.expect("Error loading session tokens");
-
 		//println!("results: {:?}",results);
 
 		if let Some(result) = results.first() {
@@ -779,9 +835,13 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWebSocket {
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 
-#[get("/live/{channel_name}")]
+#[get("/live/{stream_name}")]
 async fn live(r: HttpRequest, stream: web::Payload, path: web::Path<String>, server: web::Data<Addr<ChatServer>>) -> Result<HttpResponse, Error> {
 	let chat_name = path.into_inner();
+	// prefix with live-
+	let chat_name = format!("live-{}",chat_name);
+
+	// generate a client id
 	let client_id = uuid::Uuid::new_v4().to_string();
 
 	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new(), id: client_id };
@@ -790,7 +850,85 @@ async fn live(r: HttpRequest, stream: web::Payload, path: web::Path<String>, ser
     resp
 }
 
-use std::sync::{Arc, Mutex};
+#[derive(Message)]
+#[rtype(result = "()")]
+struct LiveUpdate {
+	livestream_name: String,
+	donation: DonationTypes,
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct NewMessageForClient {
+	donation: DonationTypes,
+	donation_id: i32,
+	read_status: bool,
+}
+
+impl Handler<NewMessageForClient> for MyWebSocket {
+	type Result = ();
+
+	fn handle(&mut self, msg: NewMessageForClient, ctx: &mut Self::Context) -> Self::Result {
+		// send the message to the client
+		ctx.text(json!({"status":"success","message":"new donation","donation":msg.donation,"read":msg.read_status}).to_string());
+	}
+}
+
+impl Handler<LiveUpdate> for ChatServer {
+	type Result = ();
+
+	fn handle(&mut self, msg: LiveUpdate, _ctx: &mut Self::Context) -> Self::Result {
+		// store the donation in the live_donations hashmap
+		self.live_donations.entry(msg.livestream_name.clone()).or_insert(Vec::new()).push(msg.donation.clone());
+		// append false value to read_status
+		self.read_status.entry(msg.livestream_name.clone()).or_insert(Vec::new()).push(false);
+
+		// get length of the vector
+		let len = self.live_donations.get(&msg.livestream_name).unwrap().len();
+
+		// send the message to all clients in the room
+		for client in self.rooms.entry(msg.livestream_name).or_insert(HashMap::new()).values() {
+			client.addr.do_send(NewMessageForClient { donation: msg.donation.clone(), read_status:false, donation_id: (len-1) as i32 });
+		}
+	}
+}
+
+#[derive(Message)]
+#[rtype(result = "()")]
+struct StreamEnd {
+	livestream_name: String,
+}
+
+impl Handler<StreamEnd> for ChatServer {
+	type Result = ();
+
+	fn handle(&mut self, msg: StreamEnd, _ctx: &mut Self::Context) -> Self::Result {
+		// disconnect all clients in the room
+		for client in self.rooms.entry(msg.livestream_name.clone()).or_insert(HashMap::new()).values() {
+			client.addr.do_send(StreamEnd { livestream_name: msg.livestream_name.clone() });
+		}
+		// print the read donations
+		match self.live_donations.get(&msg.livestream_name) {
+			Some(donations) => {
+				println!("Read donations: {:?}",donations);
+			},
+			None => {
+				println!("Read donations: 0");
+			}
+		}
+	}
+}
+
+impl Handler<StreamEnd> for MyWebSocket {
+	type Result = ();
+
+	fn handle(&mut self, _msg: StreamEnd, ctx: &mut Self::Context) -> Self::Result {
+		// disconnect the client
+		ctx.stop();
+	}
+}
+
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
 	/*
@@ -803,11 +941,18 @@ async fn main() -> std::io::Result<()> {
     let postgres_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 	let manager = ConnectionManager::<PgConnection>::new(postgres_url);
 	let pool = Pool::builder().max_size(15).build(manager).unwrap();
-	let live_messages: Arc<Mutex<HashMap<String, Vec<DonationTypes>>>> = Arc::new(Mutex::new(HashMap::new()));
+	// note to self: actors will freeze when this is used uncomment reader_actor and this to see it
+	//let live_messages: Arc<Mutex<HashMap<String, Vec<DonationTypes>>>> = Arc::new(Mutex::new(HashMap::new())); 
 
-	// spawn a thread to update the live messages
-	let live_messages_clone = live_messages.clone();
-	std::thread::spawn(move || {
+	enum LiveDonationTypes {
+		Donation(String, DonationTypes),
+		StreamEnd(String),
+	}
+
+    // Create the chat server instance
+    let server = ChatServer { rooms: HashMap::new(), pool: pool.clone(), read_status: HashMap::new(), live_donations: HashMap::new() }.start();
+	let (main_sender, receiver) = std::sync::mpsc::channel();
+	std::thread::spawn(move|| {
 		let mut existing_files = Vec::new();
 		loop {
 			// loop over all the files in in ./live/* using the glob crate
@@ -820,39 +965,40 @@ async fn main() -> std::io::Result<()> {
 				let file_name = file.file_name().unwrap().to_str().unwrap().to_string();
 				if existing_files.contains(&file_name) == false {
 					// add the file to the live messages
-					let mut live_messages = live_messages_clone.lock().unwrap();
-					live_messages.insert(file_name.clone(), Vec::new());
 					new_files.push(file_name);
 				}
 			}
 			// after that spawn a thread for each new file
 			for file_name in new_files {
-				let live_messages_clone = live_messages_clone.clone();
 				let file_name_clone = file_name.clone();
+				let tx = main_sender.clone();
 				std::thread::spawn(move || {
 					let mut last_pos = 0;
 					loop {
 						// open the file
-						let file = std::fs::File::open(&format!("./live/{file_name_clone}"));
+						let file = std::fs::File::open(&format!("./live/{}",file_name_clone.clone()));
 						if let Ok(file) = file {
 							// read the file
 							let mut reader = std::io::BufReader::new(file);
+
+							// seek to the last position
 							use std::io::{Seek,Read,BufRead};
 							reader.seek(std::io::SeekFrom::Start(last_pos)).unwrap();
-							let mut donations = Vec::new();
 							for line in reader.by_ref().lines() {
 								let line = line.unwrap();
 								let donation = serde_json::from_str::<DonationTypes>(&line);
 								if let Ok(donation) = donation {
-									donations.push(donation);
+									match tx.send(LiveDonationTypes::Donation(file_name_clone.clone(), donation)) {
+										Ok(_) => {},
+										Err(e) => {
+											println!("Error: {}",e);
+										}
+									};
 								} else {
 									println!("invalid json: {:?}",line);
 								}
 							}
 
-							// set live messages
-							let mut live_messages = live_messages_clone.lock().unwrap();
-							live_messages.insert(file_name_clone.clone(), donations);
 
 							// get the new position
 							last_pos = reader.seek(std::io::SeekFrom::Current(0)).unwrap();
@@ -860,16 +1006,16 @@ async fn main() -> std::io::Result<()> {
 							// wait 5 seconds
 						} else {
 							println!("Error: {:?}",file);
+							tx.send(LiveDonationTypes::StreamEnd(file_name_clone.clone())).unwrap();
 							// remove the file from the live messages
-							let mut live_messages = live_messages_clone.lock().unwrap();
-							live_messages.remove(&file_name_clone);
+							//live_donations.remove(&file_name_clone);
 							break;
 						}
-						// drop the file handle
 
 						std::thread::sleep(std::time::Duration::from_secs(5));
 					}
 				});
+				
 				// add the file to the existing files
 				existing_files.push(file_name);
 			}
@@ -887,9 +1033,36 @@ async fn main() -> std::io::Result<()> {
 			std::thread::sleep(std::time::Duration::from_secs(5));
 		}
 	});
+	let thread_server = server.clone();
+	std::thread::spawn(move || {
+		//receive all the messages
+		let mut live_donations:HashMap<String,Vec<DonationTypes>> = HashMap::new();
+		loop {
+			match receiver.recv() {
+				Ok(LiveDonationTypes::Donation(file_name, donation)) => {
+					// add the donation to the live donations
+					// first trim .donations.json from the file_name
+					let file_name = file_name.trim_end_matches(".donations.json").to_string();
+					// then add live- to the file_name
+					let file_name = format!("live-{}",file_name);
+					thread_server.do_send(LiveUpdate { livestream_name: file_name.clone(), donation: donation });
+				},
+				Ok(LiveDonationTypes::StreamEnd(file_name)) => {
+					println!("Stream ended: {}",file_name);
+					// remove the file from the live messages
+					live_donations.remove(&file_name);
+				},
+				Err(e) => {
+					println!("Error: {}",e);
+				}
+			}
+		}
+	});
+	//server.do_send(AddRoom { name: "general".to_string() });
 
-    // Create the chat server instance
-    let server = ChatServer { rooms: HashMap::new(), pool: pool.clone(), read_status: HashMap::new() }.start();
+	// spawn a thread to update the live messages
+	//let reader_actor = LiveReaderActor { live_donations: live_messages.clone(), chat_server:server.clone() }.start();
+	//let reader_actor = LiveReaderActor { chat_server:server.clone() }.start();
 
 	// wrap the database pool in a container
 	let db_container: Pool<ConnectionManager<PgConnection>> = pool.clone();
@@ -898,7 +1071,6 @@ async fn main() -> std::io::Result<()> {
         App::new()
 			.app_data(web::Data::new(server.clone()))
 			.app_data(web::Data::new(db_container.clone()))
-			.app_data(web::Data::new(live_messages.clone()))
             .service(index)
 			.service(streams)
 			.service(chat)

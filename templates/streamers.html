@@ -8,7 +8,15 @@
         <ul class="list-disc p-5">
         {%- for channel_name in channels -%}
             <li>
-                <a class="text-blue-600" href={{"/streams/{}"|format(channel_name)}}> {{channel_name}}</p>
+                <a class="text-blue-600" href={{"/streams/{}"|format(channel_name)}}> {{channel_name}}</a>
+            </li>
+        {%- endfor -%}
+        </ul>
+        <h2 class="text-2xl">Live streams:</h2>
+        <ul class="list-disc p-5">
+        {%- for (stream_name,stream_url) in streams -%}
+            <li>
+                <a class="text-blue-600" href={{"/chat/live/{}"|format(stream_url)}}> {{stream_name}}</a>
             </li>
         {%- endfor -%}
         </ul>
