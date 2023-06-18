@@ -290,10 +290,10 @@ use serde_json::{json, Value};
 
 #[get("/ws/{chat_name}")]
 async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<String>, server: web::Data<Addr<ChatServer>>) -> Result<HttpResponse, Error> {
-	// print chat name
 	let chat_name = path.into_inner();
-	//println!("chat name: {}",chat_name);
-	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new() };
+	let client_id = uuid::Uuid::new_v4().to_string();
+
+	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new(), id: client_id };
 
     let resp = ws::start(actor, &r, stream);
     resp
@@ -357,6 +357,7 @@ struct MyWebSocket {
 	// parent
 	addr: Addr<ChatServer>,
 	room: String,
+	id: String,
 	is_user: bool,
 	username: String,
 	// heartbeat
@@ -464,14 +465,7 @@ impl Actor for MyWebSocket {
         self.hb(ctx);
         println!("WebSocket started in room: {}",self.room);
 		// add self to room
-		self.addr.send(AddToRoom { chat_name: self.room.clone(), addr: ctx.address() })
-			.into_actor(self).then(|res, _act, ctx| {
-				match res {
-					Ok(_) => (),
-					_ => ctx.stop(),
-				}
-				fut::ready(())
-			}).wait(ctx);
+		self.addr.do_send(AddToRoom { chat_name: self.room.clone(), addr: ctx.address(), id: self.id.clone() });
 		
 		// check if database has information about this video
 		// by calling the server
@@ -479,17 +473,10 @@ impl Actor for MyWebSocket {
     }
 
 	// called when websocket is stopped
-    fn stopped(&mut self, ctx: &mut Self::Context) {
+    fn stopped(&mut self, _ctx: &mut Self::Context) {
         println!("WebSocket stopped");
 		// remove self from room
-		self.addr.send(RemoveFromRoom { chat_name: self.room.clone(), addr: ctx.address() })
-			.into_actor(self).then(|res, _act, ctx| {
-				match res {
-					Ok(_) => (),
-					_ => ctx.stop(),
-				}
-				fut::ready(())
-			}).wait(ctx);
+		self.addr.do_send(RemoveFromRoom { chat_name: self.room.clone(), id: self.id.clone() });
     }
 }
 
@@ -523,6 +510,7 @@ impl MyWebSocket {
 struct AddToRoom {
     chat_name: String,
     addr: Addr<MyWebSocket>,
+	id: String,
 }
 // Implement a signal handler for the server actor
 impl Handler<AddToRoom> for ChatServer {
@@ -530,10 +518,10 @@ impl Handler<AddToRoom> for ChatServer {
 
     fn handle(&mut self, msg: AddToRoom, _ctx: &mut Self::Context) -> Self::Result {
         // Get the list of WebSocket actors for the specified room
-        let room = self.rooms.entry(msg.chat_name.clone()).or_insert(vec![]);
+        let room = self.rooms.entry(msg.chat_name.clone()).or_insert(HashMap::new());
 
         // Add the WebSocket actor to the room
-        room.push(msg.addr);
+        room.insert(msg.id,msg.addr);
     }
 }
 
@@ -542,7 +530,7 @@ impl Handler<AddToRoom> for ChatServer {
 #[rtype(result = "()")]
 struct RemoveFromRoom {
     chat_name: String,
-    addr: Addr<MyWebSocket>,
+    id: String,
 }
 // Implement a message handler for the server actor
 impl Handler<RemoveFromRoom> for ChatServer {
@@ -551,8 +539,10 @@ impl Handler<RemoveFromRoom> for ChatServer {
     fn handle(&mut self, msg: RemoveFromRoom, _ctx: &mut Self::Context) -> Self::Result {
         // Get the list of WebSocket actors for the specified room
         if let Some(room) = self.rooms.get_mut(&msg.chat_name) {
-            // Remove the WebSocket actor from the room
-            room.retain(|addr| addr != &msg.addr);
+			// remove the WebSocket actor from the hash map
+			if room.remove(&msg.id).is_some() {
+				println!("Removed {} from room {}",msg.id,msg.chat_name);
+			}
         }
     }
 }
@@ -560,7 +550,7 @@ impl Handler<RemoveFromRoom> for ChatServer {
 use std::collections::HashMap;
 // Define the server actor
 struct ChatServer {
-    rooms: HashMap<String, Vec<Addr<MyWebSocket>>>,
+    rooms: HashMap<String, HashMap<String, Addr<MyWebSocket>>>,
 	pool: Pool<ConnectionManager<PgConnection>>,
 	read_status: HashMap<String, Vec<bool>>,
 }
@@ -601,7 +591,7 @@ impl Handler<ReadUpdate> for ChatServer {
 
 			// update other clients
 			if let Some(room) = self.rooms.get_mut(&msg.video_id) {
-				for addr in room {
+				for addr in room.values() {
 					addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone(), username: String::new() });
 				}
 			} else {
