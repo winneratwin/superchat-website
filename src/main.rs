@@ -779,6 +779,18 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWebSocket {
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 
+#[get("/live/{channel_name}")]
+async fn live(r: HttpRequest, stream: web::Payload, path: web::Path<String>, server: web::Data<Addr<ChatServer>>) -> Result<HttpResponse, Error> {
+	let chat_name = path.into_inner();
+	let client_id = uuid::Uuid::new_v4().to_string();
+
+	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new(), id: client_id };
+
+    let resp = ws::start(actor, &r, stream);
+    resp
+}
+
+use std::sync::{Arc, Mutex};
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
 	/*
@@ -791,7 +803,90 @@ async fn main() -> std::io::Result<()> {
     let postgres_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 	let manager = ConnectionManager::<PgConnection>::new(postgres_url);
 	let pool = Pool::builder().max_size(15).build(manager).unwrap();
+	let live_messages: Arc<Mutex<HashMap<String, Vec<DonationTypes>>>> = Arc::new(Mutex::new(HashMap::new()));
 
+	// spawn a thread to update the live messages
+	let live_messages_clone = live_messages.clone();
+	std::thread::spawn(move || {
+		let mut existing_files = Vec::new();
+		loop {
+			// loop over all the files in in ./live/* using the glob crate
+			let files = glob(&format!("./live/*.donations.json")).expect("Failed to read glob pattern");
+			// compare the files to the existing files
+			// for new files: add them to the live messages
+			let mut new_files = Vec::new();
+			for file in files {
+				let file = file.unwrap();
+				let file_name = file.file_name().unwrap().to_str().unwrap().to_string();
+				if existing_files.contains(&file_name) == false {
+					// add the file to the live messages
+					let mut live_messages = live_messages_clone.lock().unwrap();
+					live_messages.insert(file_name.clone(), Vec::new());
+					new_files.push(file_name);
+				}
+			}
+			// after that spawn a thread for each new file
+			for file_name in new_files {
+				let live_messages_clone = live_messages_clone.clone();
+				let file_name_clone = file_name.clone();
+				std::thread::spawn(move || {
+					let mut last_pos = 0;
+					loop {
+						// open the file
+						let file = std::fs::File::open(&format!("./live/{file_name_clone}"));
+						if let Ok(file) = file {
+							// read the file
+							let mut reader = std::io::BufReader::new(file);
+							use std::io::{Seek,Read,BufRead};
+							reader.seek(std::io::SeekFrom::Start(last_pos)).unwrap();
+							let mut donations = Vec::new();
+							for line in reader.by_ref().lines() {
+								let line = line.unwrap();
+								let donation = serde_json::from_str::<DonationTypes>(&line);
+								if let Ok(donation) = donation {
+									donations.push(donation);
+								} else {
+									println!("invalid json: {:?}",line);
+								}
+							}
+
+							// set live messages
+							let mut live_messages = live_messages_clone.lock().unwrap();
+							live_messages.insert(file_name_clone.clone(), donations);
+
+							// get the new position
+							last_pos = reader.seek(std::io::SeekFrom::Current(0)).unwrap();
+
+							// wait 5 seconds
+						} else {
+							println!("Error: {:?}",file);
+							// remove the file from the live messages
+							let mut live_messages = live_messages_clone.lock().unwrap();
+							live_messages.remove(&file_name_clone);
+							break;
+						}
+						// drop the file handle
+
+						std::thread::sleep(std::time::Duration::from_secs(5));
+					}
+				});
+				// add the file to the existing files
+				existing_files.push(file_name);
+			}
+
+			// check for removed files
+			for file_name in existing_files.clone() {
+				if std::path::Path::new(&format!("./live/{file_name}")).exists() == false {
+					// remove the file from existing files
+					existing_files.retain(|x| x != &file_name);
+				}
+			}
+
+
+			// wait 5 seconds
+			std::thread::sleep(std::time::Duration::from_secs(5));
+		}
+	});
 
     // Create the chat server instance
     let server = ChatServer { rooms: HashMap::new(), pool: pool.clone(), read_status: HashMap::new() }.start();
@@ -803,6 +898,7 @@ async fn main() -> std::io::Result<()> {
         App::new()
 			.app_data(web::Data::new(server.clone()))
 			.app_data(web::Data::new(db_container.clone()))
+			.app_data(web::Data::new(live_messages.clone()))
             .service(index)
 			.service(streams)
 			.service(chat)
@@ -810,6 +906,7 @@ async fn main() -> std::io::Result<()> {
 			.service(login_page)
 			.service(streamers)
 			.service(ws_index)
+			.service(live)
 			.service(fs::Files::new("/files", "./chats"))
 			.service(fs::Files::new("/static", "./static"))
     })
