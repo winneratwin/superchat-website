@@ -612,7 +612,6 @@ impl Handler<RemoveFromRoom> for ChatServer {
     type Result = ();
 
     fn handle(&mut self, msg: RemoveFromRoom, _ctx: &mut Self::Context) -> Self::Result {
-		println!("adding to room: {}",msg.chat_name);
         // Get the list of WebSocket actors for the specified room
         if let Some(room) = self.rooms.get_mut(&msg.chat_name) {
 			// remove the WebSocket actor from the hash map
