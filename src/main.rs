@@ -867,21 +867,6 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWebSocket {
 use diesel::pg::PgConnection;
 use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 
-#[get("/live/{stream_name}")]
-async fn live(r: HttpRequest, stream: web::Payload, path: web::Path<String>, server: web::Data<Addr<ChatServer>>) -> Result<HttpResponse, Error> {
-	let chat_name = path.into_inner();
-	// prefix with live-
-	let chat_name = format!("live-{}",chat_name);
-
-	// generate a client id
-	let client_id = uuid::Uuid::new_v4().to_string();
-
-	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new(), id: client_id };
-
-    let resp = ws::start(actor, &r, stream);
-    resp
-}
-
 #[derive(Message)]
 #[rtype(result = "()")]
 struct LiveUpdate {
@@ -1120,7 +1105,6 @@ async fn main() -> std::io::Result<()> {
 			.service(login_page)
 			.service(streamers)
 			.service(ws_index)
-			.service(live)
 			.service(fs::Files::new("/files", "./chats"))
 			.service(fs::Files::new("/static", "./static"))
     })
