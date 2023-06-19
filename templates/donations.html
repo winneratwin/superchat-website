@@ -94,6 +94,7 @@
 
                 var socket;
                 function connectWebSocket() {
+                    var stop_reconnecting = false;
                     // connect to websocket
                     socket = new WebSocket('wss://'+window.location.hostname+'/ws/{{video_id}}');
                     // bind the onmessage function
@@ -159,6 +160,15 @@
 
                         } else if (data.message == "authenticated") {
                             console.log("logged in: ", data.status)
+                        } else if (data.message == "not authenticated") {
+                            println("failed to authenticate with server")
+                            // delete token and username from local storage
+                            window.localStorage.removeItem('token');
+                            window.localStorage.removeItem('username');
+                        } else if (data.message == "stream ended") {
+                            console.log("stream ended");
+                            // set variable to stop reonnecting
+                            stop_reconnecting = true;
                         } else {
                             console.log("Unknown message: ", data );
                         }
@@ -186,6 +196,9 @@
                     };
                     socket.onclose = function(event) {
                         console.log('WebSocket connection closed');
+                        if (stop_reconnecting) {
+                            return;
+                        }
                         // clear donations
                         let container = document.getElementById("donations");
                         container.innerHTML = "";

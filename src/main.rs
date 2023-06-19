@@ -956,7 +956,9 @@ impl Handler<StreamEnd> for ChatServer {
 impl Handler<StreamEnd> for MyWebSocket {
 	type Result = ();
 
-	fn handle(&mut self, _msg: StreamEnd, ctx: &mut Self::Context) -> Self::Result {
+	fn handle(&mut self, _msg: StreamEnd, ctx: &mut Self::Context) -> Self::Result {	
+		// send the message to the client that the stream has ended
+		ctx.text(json!({"status":"success","message":"stream ended"}).to_string());
 		// disconnect the client
 		ctx.stop();
 	}
