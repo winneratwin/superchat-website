@@ -1,0 +1,156 @@
+{%- match donation -%}
+{%- when DonationTypes::Donation with (Donation) -%}
+<div id={{ donation_id }} class="flex donation color-{{ Donation.header_color -}}" >
+    <div class="w-[70px] m-2"> 
+        <div id="{{ "status-{}"|format(donation_id) }}">unknown status</div>
+        <div>
+            {{ Donation.time }}
+        </div>
+    </div>
+    <div class="m-2 w-full" style="border-radius:5px;overflow:hidden;">
+        {%- if let Some(ok) = Donation.message %}
+        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.header_color)) }}>
+        {%- else -%}
+        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
+        {%- endif -%}
+            <div class="mr-4">
+                <img onclick={{"location.href='#{}';"|format(donation_id)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Donation.thumbnail_url }} loading="lazy" />
+            </div>
+            <div>
+                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Donation.channel_id) }}>
+                    {{ Donation.username }}
+                </a>
+                <div>
+                    {{ Donation.amount }}
+                </div>
+            </div>
+        </div>
+        {% if let Some(ok) = Donation.message -%}
+        <div class="py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
+            {{ ok }}
+        </div>
+        {%- endif %}
+    </div>
+</div>
+
+{%- when DonationTypes::Membership with (Membership) -%}
+<div id={{ donation_id }} class="flex member">
+    <div class="w-[70px] m-2"> 
+        <div id="{{ "status-{}"|format(donation_id) }}">unknown status</div>
+        <div>
+            {{ Membership.time }}
+        </div>
+    </div>
+    <div id="{{ donation_id }}" class="m-2 w-full" style="border-radius:5px;overflow:hidden;">
+        {%- if let Some(ok) = Membership.message %}
+        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.header_color)) }}>
+        {%- else %}
+        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
+        {%- endif %}
+            <div class="mr-4">
+                <img onclick={{"location.href='#{}';"|format(donation_id)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Membership.thumbnail_url }} loading="lazy" />
+            </div>
+            <div>
+                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Membership.channel_id) }}>
+                    {{
+                        Membership.username
+                    }}
+                </a>
+                <div>
+                    {{
+                        Membership.months
+                    }}
+                </div>
+            </div>
+        </div>
+        {% if let Some(ok) = Membership.message -%}
+        <div class="py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
+            {{ ok }}
+        </div>
+        {%- endif %}
+    </div>
+</div>
+
+{%- when DonationTypes::GiftMembership with (Redemption) -%}
+<div id={{ donation_id }} class="flex gifted">
+    <div class="w-[70px] m-2"> 
+        <div id="{{ "status-{}"|format(donation_id) }}">unknown status</div>
+        <div>
+            {{ Redemption.time }}
+        </div>
+    </div>
+    <div class="flex m-2 my-2">
+        <img onclick={{"location.href='#{}';"|format(donation_id)}} style="margin-right:14px" class="rounded-full w-[24px] h-[24px] cursor-pointer" src={{Redemption.thumbnail_url}} loading="lazy"/>
+        <div class="align-middle">
+            <span class="" style="color:rgb(43, 166, 64)">{{Redemption.username}}</span>
+            <i> was gifted a membership by 
+                <b>{{Redemption.sender}}</b>
+            </i>
+        </div>
+    </div>
+</div>
+
+{%- when DonationTypes::GiftingMembership with (Gift) -%}
+<div id={{ donation_id }} class="flex gifted">
+    <div class="w-[70px] m-2"> 
+        <div id="{{ "status-{}"|format(donation_id) }}">unknown status</div>
+        <div>
+            {{ Gift.time }}
+        </div>
+    </div>
+    <div class="m-2 my-2 w-full">
+        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Gift.body_color)) }}>
+            <div class="mr-4">
+                <img onclick={{"location.href='#{}';"|format(donation_id)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Gift.thumbnail_url }} loading="lazy" />
+            </div>
+            <div>
+                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Gift.channel_id) }}>
+                    {{
+                        Gift.username
+                    }}
+                </a>
+                <div>
+                    {{
+                        format!("gifted {} membership(s)",Gift.number)
+                    }}
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+{%- when DonationTypes::Sticker with (Sticker) -%}
+<div id={{ donation_id }} class="flex sticker color-{{ Sticker.header_color -}}">
+    <div class="w-[70px] m-2"> 
+        <div id="{{ "status-{}"|format(donation_id) }}">unknown status</div>
+        <div>
+            {{
+                Sticker.time
+            }}
+        </div>
+    </div>
+    <div class="m-2 my-2 w-full">
+        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Sticker.header_color)) }}>
+            <div class="mr-4">
+                <img onclick={{"location.href='#{}';"|format(donation_id)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{Sticker.thumbnail_url}} loading="lazy" />
+            </div>
+            <div class="mr-4">
+                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Sticker.channel_id) }}>
+                    {{
+                        Sticker.username
+                    }}
+                </a>
+                <div>
+                    {{
+                        Sticker.sticker_cost
+                    }}
+                </div>
+            </div>
+            <img src="{{ "https:{}"|format(Sticker.sticker_image_url) }}" class="ml-auto w-[72px] h-[72px]" alt="{{ Sticker.sticker_description }}" loading="lazy" />
+        </div>
+    </div>
+</div>
+
+{%- else -%}
+<p>TYPE OF DONATION NOT IMPLEMENTED THIS SHOULDN'T HAPPEN PLEASE NOTIFY ME ON DISCORD</p> 
+{%- endmatch -%}

@@ -30,7 +30,6 @@
 
             window.addEventListener("load", async function() {
                 // on page load
-                console.log("page loaded");
                 connectWebSocket();
 
                 for (const x of document.getElementById("donations").children) 
@@ -102,7 +101,7 @@
                         //console.log('Received message:', event.data);
                         let data = JSON.parse(event.data);
 
-                        if (data.donation_id != null){
+                        if (data.message == "read status updated"){
                             let el = document.getElementById(data.donation_id);
                             if (data.is_read) {
                                 el.classList.remove(unselected_class);
@@ -113,12 +112,55 @@
                                 el.classList.add(unselected_class);
                                 document.getElementById(`status-${data.donation_id}`).innerText = "Unread";
                             }
-                        } else if (data.status) {
-                            if (data.status != "success") {
-                                console.log("Error: " + data.message);
+                        } else if (data.message == "new donation") {
+                            //console.log("new donation");
+                            //console.log("donation: ", data.donation);
+                            //console.log("donation read: ", data.read);
+
+                            // append donation to the list
+                            // create element
+                            let donation = data.donation;
+                            let div = document.createElement("div");
+                            div.innerHTML = donation;
+                            let donation_element = div.firstChild;
+                            // extract donation id
+                            let donation_id = donation_element.id;
+
+                            // append element to the list
+                            let container = document.getElementById("donations");
+                            container.appendChild(donation_element);
+                            // add event listener
+                            donation_element.addEventListener("click", function(e) {
+                                // check if the tag wasn't a link
+                                // or if it had an onclick event
+                                // if it did then don't toggle the read status
+                                if (e.target.tagName == "A" || e.target.onclick != null) {
+                                    return;
+                                }
+                                // check if the user is logged in
+                                if (window.localStorage.getItem('token') == null) {
+                                    // if they aren't logged in then
+                                    // don't toggle the read status
+                                    return;
+                                }
+
+                                toggleReadStatus(donation_id)
+                            });
+                            // set read status
+                            if (data.read) {
+                                donation_element.classList.remove(unselected_class);
+                                donation_element.classList.add(selected_class);
+                                document.getElementById(`status-${donation_id}`).innerText = "Read";
+                            } else {
+                                donation_element.classList.remove(selected_class);
+                                donation_element.classList.add(unselected_class);
+                                document.getElementById(`status-${donation_id}`).innerText = "Unread";
                             }
+
+                        } else if (data.message == "authenticated") {
+                            console.log("logged in: ", data.status)
                         } else {
-                            console.log("Unknown message: " + data);
+                            console.log("Unknown message: ", data );
                         }
                     };
 
@@ -144,6 +186,9 @@
                     };
                     socket.onclose = function(event) {
                         console.log('WebSocket connection closed');
+                        // clear donations
+                        let container = document.getElementById("donations");
+                        container.innerHTML = "";
                         setTimeout(connectWebSocket, 3000);
                     };
                 
@@ -193,6 +238,24 @@
                     str = ""
                 }
                 style.innerHTML = str;
+            }
+            function sortDonations(){
+                const donations = document.querySelector('#donations');
+                const children = Array.from(donations.children);
+
+                const sortedChildren = children.sort((a, b) => {
+                const aId = parseInt(a.id);
+                const bId = parseInt(b.id);
+                if (isNaN(aId)) {
+                    return 1;
+                } else if (isNaN(bId)) {
+                    return -1;
+                } else {
+                    return aId - bId;
+                }
+                });
+
+                donations.replaceChildren(...sortedChildren);
             }
         </script>
         <style>
@@ -277,164 +340,9 @@
         </div>
         <hr class="h-1 bg-black"/>
         <div id="donations" style="font-family: Roboto, Arial, sans-serif;word-wrap: break-word;">
-            {% for donation in donations %}
-                {% match donation %}
-                {% when DonationTypes::Donation with (Donation) %}
-                <div id={{ loop.index0 }} class="flex donation color-{{ Donation.header_color -}}" >
-                    <div class="w-[70px] m-2"> 
-                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
-                        <div>
-                            {{ Donation.time }}
-                        </div>
-                    </div>
-                    <div class="m-2 w-full" style="border-radius:5px;overflow:hidden;">
-                        {%- if let Some(ok) = Donation.message %}
-                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.header_color)) }}>
-                        {%- else -%}
-                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
-                        {%- endif -%}
-                            <div class="mr-4">
-                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Donation.thumbnail_url }} loading="lazy" />
-                            </div>
-                            <div>
-                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Donation.channel_id) }}>
-                                    {{ Donation.username }}
-                                </a>
-                                <div>
-                                    {{ Donation.amount }}
-                                </div>
-                            </div>
-                        </div>
-                        {% if let Some(ok) = Donation.message -%}
-                        <div class="py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Donation.body_color)) }}>
-                            {{ ok }}
-                        </div>
-                        {%- endif %}
-                    </div>
-                </div>
-
-                {% when DonationTypes::Membership with (Membership) %}
-                <div id={{ loop.index0 }} class="flex member">
-                    <div class="w-[70px] m-2"> 
-                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
-                        <div>
-                            {{ Membership.time }}
-                        </div>
-                    </div>
-                    <div id="{{ loop.index0 }}" class="m-2 w-full" style="border-radius:5px;overflow:hidden;">
-                        {%- if let Some(ok) = Membership.message %}
-                        <div class="flex py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.header_color)) }}>
-                        {%- else %}
-                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
-                        {%- endif %}
-                            <div class="mr-4">
-                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Membership.thumbnail_url }} loading="lazy" />
-                            </div>
-                            <div>
-                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Membership.channel_id) }}>
-                                    {{
-                                        Membership.username
-                                    }}
-                                </a>
-                                <div>
-                                    {{
-                                        Membership.months
-                                    }}
-                                </div>
-                            </div>
-                        </div>
-                        {% if let Some(ok) = Membership.message -%}
-                        <div class="py-2 px-4" style={{ "background:{}"|format(convert_int_to_color!(Membership.body_color)) }}>
-                            {{ ok }}
-                        </div>
-                        {%- endif %}
-                    </div>
-                </div>
-
-                {% when DonationTypes::GiftMembership with (Redemption) %}
-                <div id={{ loop.index0 }} class="flex gifted">
-                    <div class="w-[70px] m-2"> 
-                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
-                        <div>
-                            {{ Redemption.time }}
-                        </div>
-                    </div>
-                    <div class="flex m-2 my-2">
-                        <img onclick={{"location.href='#{}';"|format(loop.index0)}} style="margin-right:14px" class="rounded-full w-[24px] h-[24px] cursor-pointer" src={{Redemption.thumbnail_url}} loading="lazy"/>
-                        <div class="align-middle">
-                            <span class="" style="color:rgb(43, 166, 64)">{{Redemption.username}}</span>
-                            <i> was gifted a membership by 
-                                <b>{{Redemption.sender}}</b>
-                            </i>
-                        </div>
-                    </div>
-                </div>
-
-                {% when DonationTypes::GiftingMembership with (Gift) %}
-                <div id={{ loop.index0 }} class="flex gifted">
-                    <div class="w-[70px] m-2"> 
-                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
-                        <div>
-                            {{ Gift.time }}
-                        </div>
-                    </div>
-                    <div class="m-2 my-2 w-full">
-                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Gift.body_color)) }}>
-                            <div class="mr-4">
-                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{ Gift.thumbnail_url }} loading="lazy" />
-                            </div>
-                            <div>
-                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Gift.channel_id) }}>
-                                    {{
-                                        Gift.username
-                                    }}
-                                </a>
-                                <div>
-                                    {{
-                                        format!("gifted {} membership(s)",Gift.number)
-                                    }}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                {% when DonationTypes::Sticker with (Sticker) %}
-                <div id={{ loop.index0 }} class="flex sticker color-{{ Sticker.header_color -}}">
-                    <div class="w-[70px] m-2"> 
-                        <div id="{{ "status-{}"|format(loop.index0) }}">unknown status</div>
-                        <div>
-                            {{
-                                Sticker.time
-                            }}
-                        </div>
-                    </div>
-                    <div class="m-2 my-2 w-full">
-                        <div class="flex py-2 px-4" style={{ "border-radius:5px;overflow:hidden;background:{}"|format(convert_int_to_color!(Sticker.header_color)) }}>
-                            <div class="mr-4">
-                                <img onclick={{"location.href='#{}';"|format(loop.index0)}} class="rounded-full w-[40px] h-[40px] cursor-pointer" src={{Sticker.thumbnail_url}} loading="lazy" />
-                            </div>
-                            <div class="mr-4">
-                                <a class="text-black/[.54]" href={{ "https://youtube.com/channel/{}"|format(Sticker.channel_id) }}>
-                                    {{
-                                        Sticker.username
-                                    }}
-                                </a>
-                                <div>
-                                    {{
-                                        Sticker.sticker_cost
-                                    }}
-                                </div>
-                            </div>
-                            <img src="{{ "https:{}"|format(Sticker.sticker_image_url) }}" class="ml-auto w-[72px] h-[72px]" alt="{{ Sticker.sticker_description }}" loading="lazy" />
-                        </div>
-                    </div>
-                </div>
-
-                {% else %}
-                <p>TYPE OF DONATION NOT IMPLEMENTED THIS SHOULDN'T HAPPEN PLEASE NOTIFY ME ON DISCORD</p> 
-                {% endmatch %}
-            {% endfor -%}
+            {%- for donation in donations -%}
+                {{ donation|safe }}
+            {%- endfor %}
         </div>
         <hr class="h-1 bg-black"/>
         <div class="my-4">
