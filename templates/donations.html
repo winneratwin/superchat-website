@@ -32,6 +32,20 @@
                 // on page load
                 connectWebSocket();
 
+                let video_id = "{{video_id}}";
+                // if video_id starts with live- then it is a live stream
+                // if it is a live stream then enable all the visibility toggles
+                if (video_id.startsWith("live-")) {
+                    let toggles = document.getElementById("valuetoggles").children
+                    // change style.display to inline
+                    // change checked to true
+                    for (const x of toggles) 
+                    {
+                        x.getElementsByTagName('span')[0].style.display="inline";
+                        x.getElementsByTagName('input')[0].checked=true;
+                    }
+                }
+
                 for (const x of document.getElementById("donations").children) 
                 {
                     x.addEventListener("click", function(e) {
@@ -199,9 +213,13 @@
                         if (stop_reconnecting) {
                             return;
                         }
-                        // clear donations
-                        let container = document.getElementById("donations");
-                        container.innerHTML = "";
+                        // clear donations only if livestream ended
+                        // since normal videos don't send donations
+                        // to the client
+                        if (video_id.startsWith("live-")){
+                            let container = document.getElementById("donations");
+                            container.innerHTML = "";
+                        }
                         setTimeout(connectWebSocket, 3000);
                     };
                 
@@ -319,7 +337,7 @@
                     </label>
                 </div>
                 <p>dono value toggles:</p>
-                <div class="my-3">
+                <div class="my-3" id="valuetoggles">
                     <label id="4279592384">
                         <input type="checkbox" onclick='togglevisibility(".color-4279592384",this)' hidden>
                         <span style="display:none" class="cursor-pointer my-2 p-2 rounded-full">blue</span>

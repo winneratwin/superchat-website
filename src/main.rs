@@ -538,9 +538,9 @@ impl Actor for MyWebSocket {
 	// called when websocket is started
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
-        println!("WebSocket started in room: {}",self.room);
 		// add self to room
 		self.addr.do_send(AddToRoom { chat_name: self.room.clone(), addr: ctx.address(), id: self.id.clone() });
+        println!("Added {} to room {}",self.id,self.room);
 		
 		// check if database has information about this video
 		// by calling the server
@@ -549,7 +549,7 @@ impl Actor for MyWebSocket {
 
 	// called when websocket is stopped
     fn stopped(&mut self, _ctx: &mut Self::Context) {
-        println!("WebSocket stopped");
+        //println!("WebSocket stopped");
 		// remove self from room
 		self.addr.do_send(RemoveFromRoom { chat_name: self.room.clone(), id: self.id.clone() });
     }
@@ -596,7 +596,7 @@ impl Handler<AddToRoom> for ChatServer {
         let room = self.rooms.entry(msg.chat_name.clone()).or_insert(HashMap::new());
 
         // Add the WebSocket actor to the room
-        room.insert(msg.id,WebsocketClient { addr: msg.addr, num_sent: 0 });
+        room.insert(msg.id,WebsocketClient { addr: msg.addr });
     }
 }
 
@@ -625,7 +625,6 @@ impl Handler<RemoveFromRoom> for ChatServer {
 
 struct WebsocketClient {
 	addr: Addr<MyWebSocket>,
-	num_sent: usize,
 }
 
 use std::collections::HashMap;
