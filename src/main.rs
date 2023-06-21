@@ -709,12 +709,13 @@ impl Handler<ReadUpdate> for ChatServer {
 				
 				let _res = diesel::insert_into(read_status_change_log)
 					.values((
+						timestamp.eq(SystemTime::now()),
 						username.eq(&msg.username),
 						video_id.eq(&msg.video_id),
 						donation_id.eq(&msg.donation_id),
 						previous_status.eq(&previous_read_status),
 						new_status.eq(&msg.is_read),
-						timestamp.eq(SystemTime::now()),
+						channel.eq(&msg.channel_name),
 					))
 					.get_result::<models::ReadStatusChangeLog>(&mut pool)
 					.expect("Error inserting into read_status_change_log");	

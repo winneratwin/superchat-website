@@ -24,8 +24,8 @@ pub struct SessionToken {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct VideoDonationStatus {
     pub id: String,
-    pub channel: String,
     pub value: String,
+    pub channel: String,
 }
 
 #[derive(Queryable, Selectable, Debug)]
@@ -39,4 +39,5 @@ pub struct ReadStatusChangeLog {
     pub donation_id: i32,
     pub previous_status: bool,
     pub new_status: bool,
+    pub channel: String,
 }

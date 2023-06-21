@@ -9,6 +9,7 @@ diesel::table! {
         donation_id -> Int4,
         previous_status -> Bool,
         new_status -> Bool,
+        channel -> Text,
     }
 }
 
@@ -28,7 +29,7 @@ diesel::table! {
 }
 
 diesel::table! {
-    video_donation_status (id, channel) {
+    video_donation_status (channel, id) {
         #[max_length = 30]
         id -> Varchar,
         value -> Text,
