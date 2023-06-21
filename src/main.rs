@@ -237,6 +237,7 @@ struct DonationsTemplate {
 	donations: Vec<String>,
 	colors: Vec<(i64,i64)>,
 	video_id: String,
+	channel_name: String,
 }
 
 #[derive(Template)]
@@ -271,7 +272,7 @@ async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 		let donations = Vec::new();
 		let donations_colors = Vec::new();
 		use urlencoding::encode;
-		let template = DonationsTemplate { donations: donations, colors: donations_colors, video_id: format!("live-{}",encode(&chat_name)) };
+		let template = DonationsTemplate { donations: donations, colors: donations_colors, video_id: format!("live-{}",encode(&chat_name)), channel_name: channel_name };
 		return template.to_response()
 	}
 
@@ -318,7 +319,7 @@ async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 	donations_colors.sort();
 	donations_colors.dedup();
 	//println!("donations_colors: {:?}",donations_colors);
-	let template = DonationsTemplate { donations: donations, colors: donations_colors, video_id: chat_name };
+	let template = DonationsTemplate { donations: donations, colors: donations_colors, video_id: chat_name, channel_name: channel_name };
 	template.to_response()
 	
 
@@ -331,9 +332,9 @@ use actix_web::{Error, HttpRequest};
 use actix_web_actors::ws;
 use serde_json::{json, Value};
 
-#[get("/ws/{chat_name}")]
-async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<String>, server: web::Data<Addr<ChatServer>>) -> Result<HttpResponse, Error> {
-	let chat_name = path.into_inner();
+#[get("/ws/{channel_name}/{chat_name}")]
+async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<(String,String)>, server: web::Data<Addr<ChatServer>>) -> Result<HttpResponse, Error> {
+	let (streamer, chat_name) = path.into_inner();
 	// if chat_name starts with live- then it is a live chat
 	let is_live = chat_name.starts_with("live-");
 	// if it is live then check if file exists in live folder

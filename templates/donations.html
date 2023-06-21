@@ -110,7 +110,7 @@
                 function connectWebSocket() {
                     var stop_reconnecting = false;
                     // connect to websocket
-                    socket = new WebSocket('wss://'+window.location.hostname+'/ws/{{video_id}}');
+                    socket = new WebSocket('wss://'+window.location.hostname+'/ws/{{channel_name}}/{{video_id}}');
                     // bind the onmessage function
                     socket.onmessage = function(event) {
                         //console.log('Received message:', event.data);
