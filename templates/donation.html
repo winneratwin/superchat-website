@@ -82,7 +82,7 @@
     <div class="flex m-2 my-2">
         <img onclick={{"location.href='#{}';"|format(donation_id)}} style="margin-right:14px" class="rounded-full w-[24px] h-[24px] cursor-pointer" src={{Redemption.thumbnail_url}} loading="lazy"/>
         <div class="align-middle">
-            <span class="" style="color:rgb(43, 166, 64)">{{Redemption.username}}</span>
+            <a href={{ "https://youtube.com/channel/{}"|format(Redemption.channel_id) }} style="color:rgb(43, 166, 64)">{{Redemption.username}}</a>
             <i> was gifted a membership by 
                 <b>{{Redemption.sender}}</b>
             </i>
