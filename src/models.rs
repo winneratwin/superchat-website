@@ -24,6 +24,7 @@ pub struct SessionToken {
 #[diesel(check_for_backend(diesel::pg::Pg))]
 pub struct VideoDonationStatus {
     pub id: String,
+    pub channel: String,
     pub value: String,
 }
 

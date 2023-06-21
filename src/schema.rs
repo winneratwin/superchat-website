@@ -28,10 +28,11 @@ diesel::table! {
 }
 
 diesel::table! {
-    video_donation_status (id) {
+    video_donation_status (id, channel) {
         #[max_length = 30]
         id -> Varchar,
         value -> Text,
+        channel -> Text,
     }
 }
 

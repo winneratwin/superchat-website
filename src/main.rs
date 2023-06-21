@@ -348,7 +348,7 @@ async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<(String,
 
 	let client_id = uuid::Uuid::new_v4().to_string();
 
-	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new(), id: client_id };
+	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new(), id: client_id, channel_name: streamer };
 
     let resp = ws::start(actor, &r, stream);
     resp
@@ -412,6 +412,7 @@ struct MyWebSocket {
 	// parent
 	addr: Addr<ChatServer>,
 	room: String,
+	channel_name: String,
 	id: String,
 	is_user: bool,
 	username: String,
@@ -423,6 +424,7 @@ struct MyWebSocket {
 #[rtype(result = "()")]
 struct GetDonations {
 	chat_name: String,
+	channel_name: String,
 	addr: Addr<MyWebSocket>,
 }
 
@@ -464,7 +466,7 @@ impl Handler<GetDonations> for ChatServer {
 		if let Some(res) = self.read_status.get(&msg.chat_name) {
 			//println!("sending donations from cache");
 			for (id,status) in res.iter().enumerate() {
-				msg.addr.do_send(ReadUpdate{ donation_id: id as i32, is_read: *status, video_id: msg.chat_name.clone(), username: String::new() });
+				msg.addr.do_send(ReadUpdate{ donation_id: id as i32, is_read: *status, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
 			}
 			return;
 		}
@@ -475,6 +477,7 @@ impl Handler<GetDonations> for ChatServer {
 		let mut pool = self.pool.get().unwrap();
 		let videos = schema::video_donation_status::table
 			.filter(schema::video_donation_status::id.eq(&msg.chat_name))
+			.filter(schema::video_donation_status::channel.eq(&msg.channel_name))
 			.load::<models::VideoDonationStatus>(&mut pool)
 			.expect("Error loading donations");
 
@@ -490,14 +493,14 @@ impl Handler<GetDonations> for ChatServer {
 				self.read_status.insert(msg.chat_name.clone(),list.clone());
 				
 				for (i,x) in list.iter().enumerate() {
-					msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *x, video_id: msg.chat_name.clone(), username: String::new() });
+					msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *x, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
 				}
 			}
 		} else {
 			//println!("donations not found in database");
 
 			// get donations file
-			let donations_file = glob(&format!("./chats/*/{}/*.donations.json",msg.chat_name)).expect("Failed to read donations file").next().expect("Failed to read donations file").expect("Failed to read donations file");
+			let donations_file = glob(&format!("./chats/{}/{}/*.donations.json",msg.channel_name,msg.chat_name)).expect("Failed to read donations file").next().expect("Failed to read donations file").expect("Failed to read donations file");
 			// read donations file
 			let donations_file = std::fs::read_to_string(donations_file).expect("Failed to read donations file").lines().count();
 			// create empty list with default value of false
@@ -512,6 +515,7 @@ impl Handler<GetDonations> for ChatServer {
 				.values((
 					schema::video_donation_status::id.eq(msg.chat_name.clone()),
 					schema::video_donation_status::value.eq(serde_json::to_string(&list).expect("Failed to serialize donations")),
+					schema::video_donation_status::channel.eq(msg.channel_name.clone())
 				))
 				.execute(&mut pool)
 				.expect("Error saving new donations");
@@ -519,7 +523,7 @@ impl Handler<GetDonations> for ChatServer {
 			// loop through donations
 			for (i,v) in list.iter().enumerate() {
 				// send update to client
-				msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *v, video_id: msg.chat_name.clone(), username: String::new() });
+				msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *v, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
 			}
 		}
 	}
@@ -540,19 +544,19 @@ impl Actor for MyWebSocket {
     fn started(&mut self, ctx: &mut Self::Context) {
         self.hb(ctx);
 		// add self to room
-		self.addr.do_send(AddToRoom { chat_name: self.room.clone(), addr: ctx.address(), id: self.id.clone() });
-        println!("Added {} to room {}",self.id,self.room);
+		self.addr.do_send(AddToRoom { chat_name: self.room.clone(), addr: ctx.address(), id: self.id.clone(), channel_name: self.channel_name.clone() });
+        println!("Added {} to room {} in channel {}",self.id,self.room,self.channel_name);
 		
 		// check if database has information about this video
 		// by calling the server
-		self.addr.do_send(GetDonations { chat_name: self.room.clone(), addr: ctx.address()});
+		self.addr.do_send(GetDonations { chat_name: self.room.clone(), addr: ctx.address(), channel_name: self.channel_name.clone() });
     }
 
 	// called when websocket is stopped
     fn stopped(&mut self, _ctx: &mut Self::Context) {
         //println!("WebSocket stopped");
 		// remove self from room
-		self.addr.do_send(RemoveFromRoom { chat_name: self.room.clone(), id: self.id.clone() });
+		self.addr.do_send(RemoveFromRoom { chat_name: self.room.clone(), id: self.id.clone(), channel_name: self.channel_name.clone() });
     }
 }
 
@@ -585,6 +589,7 @@ impl MyWebSocket {
 #[rtype(result = "()")]
 struct AddToRoom {
     chat_name: String,
+	channel_name: String,
     addr: Addr<MyWebSocket>,
 	id: String,
 }
@@ -594,7 +599,7 @@ impl Handler<AddToRoom> for ChatServer {
 
     fn handle(&mut self, msg: AddToRoom, _ctx: &mut Self::Context) -> Self::Result {
         // Get the list of WebSocket actors for the specified room
-        let room = self.rooms.entry(msg.chat_name.clone()).or_insert(HashMap::new());
+        let room = self.rooms.entry((msg.chat_name.clone(),msg.channel_name.clone())).or_insert(HashMap::new());
 
         // Add the WebSocket actor to the room
         room.insert(msg.id,WebsocketClient { addr: msg.addr });
@@ -606,6 +611,7 @@ impl Handler<AddToRoom> for ChatServer {
 #[rtype(result = "()")]
 struct RemoveFromRoom {
     chat_name: String,
+	channel_name: String,
     id: String,
 }
 // Implement a message handler for the server actor
@@ -614,10 +620,10 @@ impl Handler<RemoveFromRoom> for ChatServer {
 
     fn handle(&mut self, msg: RemoveFromRoom, _ctx: &mut Self::Context) -> Self::Result {
         // Get the list of WebSocket actors for the specified room
-        if let Some(room) = self.rooms.get_mut(&msg.chat_name) {
+        if let Some(room) = self.rooms.get_mut(&(msg.chat_name.clone(), msg.channel_name.clone())) {
 			// remove the WebSocket actor from the hash map
 			if room.remove(&msg.id).is_some() {
-				println!("Removed {} from room {}",msg.id,msg.chat_name);
+				println!("Removed {} from room {} in channel {}",msg.id,msg.chat_name,msg.channel_name);
 			}
         }
     }
@@ -631,7 +637,7 @@ struct WebsocketClient {
 use std::collections::HashMap;
 // Define the server actor
 struct ChatServer {
-    rooms: HashMap<String, HashMap<String, WebsocketClient>>,
+    rooms: HashMap<(String, String), HashMap<String, WebsocketClient>>,
 	pool: Pool<ConnectionManager<PgConnection>>,
 	read_status: HashMap<String, Vec<bool>>,
 	live_donations: HashMap<String, Vec<DonationTypes>>
@@ -652,6 +658,7 @@ struct ReadUpdate {
 	donation_id:i32,
 	is_read:bool,
 	video_id:String,
+	channel_name:String,
 	username:String,
 }
 
@@ -672,9 +679,9 @@ impl Handler<ReadUpdate> for ChatServer {
 			
 
 			// update other clients
-			if let Some(room) = self.rooms.get_mut(&msg.video_id) {
+			if let Some(room) = self.rooms.get_mut(&(msg.video_id.clone(),msg.channel_name.clone())) {
 				for client in room.values() {
-					client.addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone(), username: String::new() });
+					client.addr.do_send(ReadUpdate { donation_id: msg.donation_id, is_read: msg.is_read, video_id: msg.video_id.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
 				}
 			} else {
 				println!("room not found someow. this should not happen");
@@ -836,7 +843,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWebSocket {
 						return;
 					}
 					// send the message to the server
-					self.addr.do_send(ReadUpdate { donation_id: contents.donation_id, is_read: contents.is_read, video_id: self.room.clone(), username: self.username.clone() });
+					self.addr.do_send(ReadUpdate { donation_id: contents.donation_id, is_read: contents.is_read, video_id: self.room.clone(), username: self.username.clone(), channel_name: self.channel_name.clone() });
 				} else if let Ok(contents) = serde_json::from_str::<AuthenticationContents>(&text) {
 					// send the message to the server
 					self.addr.do_send(Authentication { username: contents.username, password: contents.password, addr: ctx.address() });
@@ -902,7 +909,7 @@ impl Handler<LiveUpdate> for ChatServer {
 		let len = self.live_donations.get(&msg.livestream_name).unwrap().len();
 
 		// send the message to all clients in the room
-		for client in self.rooms.entry(msg.livestream_name).or_insert(HashMap::new()).values() {
+		for client in self.rooms.entry((msg.livestream_name,"live".to_string())).or_insert(HashMap::new()).values() {
 			let donation = DonationTemplate{ donation: msg.donation.clone(), donation_id: (len-1) as i32}.render().expect("Failed to render donation template");
 			use minify_html::{Cfg, minify};
 			let donation = String::from_utf8(minify(donation.as_bytes(), &Cfg::default())).expect("Failed to convert to string");
@@ -922,7 +929,7 @@ impl Handler<StreamEnd> for ChatServer {
 
 	fn handle(&mut self, msg: StreamEnd, _ctx: &mut Self::Context) -> Self::Result {
 		// disconnect all clients in the room
-		for client in self.rooms.entry(msg.livestream_name.clone()).or_insert(HashMap::new()).values() {
+		for client in self.rooms.entry((msg.livestream_name.clone(),"live".to_string())).or_insert(HashMap::new()).values() {
 			client.addr.do_send(StreamEnd { livestream_name: msg.livestream_name.clone() });
 		}
 		// print the read donations
