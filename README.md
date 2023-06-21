@@ -27,6 +27,6 @@ the metadata folder that is created by download-info.sh
 
 if you want to add a livestream to the livestreams part in /streams this is the command i use to watch the live chat for a stream and output donations into a directory
 ```
-STREAMCHAT=./_qpo70DTrak/🔴SURPRISE\ GUEST\ APPEAREANCE\!\ link\ in\ description\!.live_chat.json.part; echo "$STREAMCHAT" | entr superchat-extractor --file $STREAMCHAT 2> ~/rust/superchat-extractor-web/live/"$(basename "$STREAMCHAT" .live_chat.json.part)".donations.json
+~/rust/superchat-extractor-web/scripts/watch-live.sh ./_qpo70DTrak/🔴SURPRISE\ GUEST\ APPEAREANCE\!\ link\ in\ description\!.live_chat.json.part
 ```
-the second part may be any name that ends in .donation.json inside the live folder of the project
+`~/rust/superchat-extractor-web` is the path to this repo on my local machine and the second part is the path to the livechat output by yt-dlp
