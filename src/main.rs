@@ -2,6 +2,9 @@ use actix_web::{get, post, App, web, HttpResponse, HttpServer, Responder};
 use askama_actix::{Template,TemplateToResponse};
 use glob::glob;
 use actix_files as fs;
+use urlencoding::encode;
+use std::io::{Seek,Read,BufRead};
+use minify_html::{Cfg, minify};
 
 use diesel::prelude::*;
 pub mod schema;
@@ -45,7 +48,7 @@ async fn streamers() -> impl Responder {
 	let mut out = Vec::new();
 	// loop over chats directory
 	let paths: Vec<_> = std::fs::read_dir("./chats").expect("Unable to read chat directory")
-		.map(|r| r.unwrap())
+		.map(Result::unwrap)
 		.collect();
 	for file in paths {
 		// check if file is a directory
@@ -63,13 +66,13 @@ async fn streamers() -> impl Responder {
 	}
 
 	// get streams
-	let files = glob(&format!("./live/*.donations.json")).expect("Failed to read glob pattern");
+	let files = glob("./live/*.donations.json").expect("Failed to read glob pattern");
 	// convert to strings
-	let stream_names: Vec<String> = files.map(|r| r.unwrap().file_name().unwrap().to_str().unwrap().to_string()).collect();
+	let stream_names: Vec<String> = files.map(|r| r.expect("failed to get file").file_name().expect("failed to get filename").to_str().expect("failed to convert to str").to_string()).collect();
 	// remove file extension
 	let stream_names = stream_names.iter().map(|s| s.replace(".donations.json","")).collect::<Vec<String>>();
-	use urlencoding::encode;
-	let stream_names = stream_names.iter().map(|s| (s.to_owned(),encode(s).into_owned())).collect::<Vec<(String,String)>>();
+	
+	let stream_names = stream_names.iter().map(|s| (s.clone() ,encode(s).into_owned())).collect::<Vec<(String,String)>>();
 
 
 	let template = ChannelsTemplate{channels: out, streams: stream_names};
@@ -83,7 +86,7 @@ async fn streams(channel_name: web::Path<String>) -> impl Responder {
 	let mut out: Vec<Stream> = Vec::new();
 	// loop over chats directory
 	let paths: Vec<_> = std::fs::read_dir(format!("./chats/{channel_name}")).expect("Unable to read chat directory")
-		.map(|r| r.unwrap())
+		.map(|r| r.expect("failed to read file"))
 		.collect();
 	for file in paths {
 		// check if file is a directory
@@ -98,15 +101,14 @@ async fn streams(channel_name: web::Path<String>) -> impl Responder {
 		let folder_name = path.file_name().expect("failed to read filename").to_str().expect("failed to convert filename to str").to_string();
 
 		// get thumbnail
-		let thumbnail = glob(&format!("./chats/{channel_name}/{}/*.webp",folder_name)).expect("Failed to read thumbnail").next().expect("Failed to read thumbnail").expect("Failed to read thumbnail");
+		let thumbnail = glob(&format!("./chats/{channel_name}/{folder_name}/*.webp")).expect("Failed to read thumbnail").next().expect("Failed to read thumbnail").expect("Failed to read thumbnail");
 		let thumbnail_filename = thumbnail.as_path().file_name().expect("Failed to read thumbnail").to_str().expect("Failed to convert thumbnail to str").to_string();
-		use urlencoding::encode;
 		let thumbnail_filename = encode(&thumbnail_filename).into_owned();
 		// remove file extension
 		let stream_name = thumbnail.file_stem().expect("Failed to read file name").to_str().expect("Failed to convert file name to str").to_string();
 		
 		// get 
-		let date_file_path = format!{"./chats/{channel_name}/{}/{}.date",folder_name,stream_name};
+		let date_file_path = format!("./chats/{channel_name}/{folder_name}/{stream_name}.date");
 		let date_file = std::path::Path::new(&date_file_path);
 
 		// parse date_file as i64
@@ -116,12 +118,12 @@ async fn streams(channel_name: web::Path<String>) -> impl Responder {
 		/* 
 		let desc_file_path = format!{"./chats/{}/{}.description",folder_name,stream_name};
 		let desc_file = std::path::Path::new(&desc_file_path);
-		let desc_file_name = desc_file.file_name().expect("failed to get filename").to_str().unwrap().to_string();
+		let desc_file_name = desc_file.file_name().expect("failed to get filename").to_str().expect().to_string();
 		*/
 		let res = Stream{
 			title: stream_name,
-			thumbnail: format!{"/files/{channel_name}/{}/{}",folder_name,thumbnail_filename},
-			link: format!("/chat/{channel_name}/{}",folder_name),
+			thumbnail: format!("/files/{channel_name}/{folder_name}/{thumbnail_filename}"),
+			link: format!("/chat/{channel_name}/{folder_name}"),
 			date_released: date_released_string,
 		};
 		out.push(res);
@@ -142,9 +144,9 @@ fn toargb(number:i64) -> String {
 	let g = number >> 8 & 255;
 	let b = number & 255;
 	if a == 0 {
-		format!("rgb({},{},{})",r,g,b)
+		format!("rgb({r},{g},{b})")
 	} else {
-		format!("rgba({},{},{},{})",r,g,b,a)
+		format!("rgba({r},{g},{b},{a})")
 	}
 }
 
@@ -257,7 +259,7 @@ async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 	// if channel_name is live then chat_name is the video_name
 	if channel_name == "live" {
 		// check for chat_name.donations.json
-		let donations_file = format!("./live/{}.donations.json", chat_name);
+		let donations_file = format!("./live/{chat_name}.donations.json" );
 		if !std::path::Path::new(&donations_file).exists() {
 			return HttpResponse::NotFound().body("
 			<main>
@@ -271,8 +273,7 @@ async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 
 		let donations = Vec::new();
 		let donations_colors = Vec::new();
-		use urlencoding::encode;
-		let template = DonationsTemplate { donations: donations, colors: donations_colors, video_id: format!("live-{}",encode(&chat_name)), channel_name: channel_name };
+		let template = DonationsTemplate { donations, colors: donations_colors, video_id: format!("live-{}",encode(&chat_name)), channel_name };
 		return template.to_response()
 	}
 
@@ -309,17 +310,16 @@ async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 			},
 			_ =>{}
 		}
-		let donation = DonationTemplate{ donation: donation, donation_id: id as i32 }.render().expect("Failed to render donation");
-		use minify_html::{Cfg, minify};
+		let donation = DonationTemplate{ donation, donation_id: i32::try_from(id).expect("failed to convert id") }.render().expect("Failed to render donation");
 		let donation = String::from_utf8(minify(donation.as_bytes(), &Cfg::default())).expect("Failed to convert to string");
 		donations.push(donation);
 	}
 	//println!("donations: {:?}",donations);
 	// deduplicate colors
-	donations_colors.sort();
+	donations_colors.sort_unstable();
 	donations_colors.dedup();
 	//println!("donations_colors: {:?}",donations_colors);
-	let template = DonationsTemplate { donations: donations, colors: donations_colors, video_id: chat_name, channel_name: channel_name };
+	let template = DonationsTemplate { donations, colors: donations_colors, video_id: chat_name, channel_name };
 	template.to_response()
 	
 
@@ -339,8 +339,8 @@ async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<(String,
 	let is_live = chat_name.starts_with("live-");
 	// if it is live then check if file exists in live folder
 	if is_live {
-		let chat_name = chat_name.strip_prefix("live-").unwrap();
-		let donations_file = format!("./live/{}.donations.json", chat_name);
+		let chat_name = chat_name.strip_prefix("live-").expect("Failed to strip prefix");
+		let donations_file = format!("./live/{chat_name}.donations.json");
 		if !std::path::Path::new(&donations_file).exists() {
 			return Ok(HttpResponse::NotFound().body("Failed to read donations file"));
 		};
@@ -350,16 +350,15 @@ async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<(String,
 
 	let actor = MyWebSocket { addr: server.get_ref().clone(), room: chat_name, is_user: false, hb: Instant::now(), username:String::new(), id: client_id, channel_name: streamer };
 
-    let resp = ws::start(actor, &r, stream);
-    resp
+    ws::start(actor, &r, stream)
 }
 
 use std::time::SystemTime;
-use crate::schema::users::dsl::*;
 #[post("/login")]
 async fn login(body:web::Json<AuthenticationContents>, pool_wrap: web::Data<Pool<ConnectionManager<PgConnection>>> ) -> impl Responder {
+	use crate::schema::users::dsl::{users, username};
 	// get pool
-	let mut pool = pool_wrap.get().unwrap();
+	let mut pool = pool_wrap.get().expect("Failed to get connection from pool");
 	// check if user exists
 	let user = users.filter(username.eq(&body.username)).first::<models::User>(&mut pool);
 	match user {
@@ -442,11 +441,10 @@ impl Handler<GetDonations> for ChatServer {
 				if let Some(status) = self.read_status.get(&msg.chat_name) {
 					//println!("sending donations from cache");
 					for (id,donation) in res.iter().enumerate() {
-						let donation = DonationTemplate { donation: donation.clone(), donation_id: id as i32 }.render().expect("Failed to render donation");
-						use minify_html::{Cfg, minify};
+						let donation = DonationTemplate { donation: donation.clone(), donation_id: i32::try_from(id).expect("failed to convert id") }.render().expect("Failed to render donation");
 						let donation = String::from_utf8(minify(donation.as_bytes(), &Cfg::default())).expect("Failed to convert to string");
 
-						msg.addr.do_send(NewMessageForClient{ donation: donation, read_status: status[id] });
+						msg.addr.do_send(NewMessageForClient{ donation, read_status: status[id] });
 					}
 					return;
 				}
@@ -466,7 +464,7 @@ impl Handler<GetDonations> for ChatServer {
 		if let Some(res) = self.read_status.get(&msg.chat_name) {
 			//println!("sending donations from cache");
 			for (id,status) in res.iter().enumerate() {
-				msg.addr.do_send(ReadUpdate{ donation_id: id as i32, is_read: *status, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
+				msg.addr.do_send(ReadUpdate{ donation_id: i32::try_from(id).expect("failed to convert id"), is_read: *status, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
 			}
 			return;
 		}
@@ -474,7 +472,7 @@ impl Handler<GetDonations> for ChatServer {
 
 		// get donations
 		// do a database query 
-		let mut pool = self.pool.get().unwrap();
+		let mut pool = self.pool.get().expect("Failed to get database connection");
 		let videos = schema::video_donation_status::table
 			.filter(schema::video_donation_status::id.eq(&msg.chat_name))
 			.filter(schema::video_donation_status::channel.eq(&msg.channel_name))
@@ -482,18 +480,18 @@ impl Handler<GetDonations> for ChatServer {
 			.expect("Error loading donations");
 
 		// check if there are any donations
-		let exists =  videos.len() > 0;
+		let exists =  !videos.is_empty();
 
 		if exists {
 			for donations in videos {
 				let list:Value = serde_json::from_str(donations.value.as_str()).expect("database corruption");
-				let list = list.as_array().unwrap().into_iter().map(|x| x.as_bool().unwrap()).collect::<Vec<bool>>();
+				let list = list.as_array().expect("failed to convert to array").iter().map(|x| x.as_bool().expect("failed to parse boolian")).collect::<Vec<bool>>();
 				
 				// cache the results
 				self.read_status.insert(msg.chat_name.clone(),list.clone());
 				
 				for (i,x) in list.iter().enumerate() {
-					msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *x, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
+					msg.addr.do_send(ReadUpdate{ donation_id: i32::try_from(i).expect("failed to convert i"), is_read: *x, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
 				}
 			}
 		} else {
@@ -523,7 +521,7 @@ impl Handler<GetDonations> for ChatServer {
 			// loop through donations
 			for (i,v) in list.iter().enumerate() {
 				// send update to client
-				msg.addr.do_send(ReadUpdate{ donation_id: i as i32, is_read: *v, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
+				msg.addr.do_send(ReadUpdate{ donation_id: i32::try_from(i).expect("failed to convert i"), is_read: *v, video_id: msg.chat_name.clone(), username: String::new(), channel_name: msg.channel_name.clone() });
 			}
 		}
 	}
@@ -561,7 +559,7 @@ impl Actor for MyWebSocket {
 }
 
 impl MyWebSocket {
-    /// helper method that sends ping to client every 5 seconds (HEARTBEAT_INTERVAL).
+    /// helper method that sends ping to client every 5 seconds (`HEARTBEAT_INTERVAL`).
     ///
     /// also this method checks heartbeats from client
     fn hb(&self, ctx: &mut ws::WebsocketContext<Self>) {
@@ -599,7 +597,7 @@ impl Handler<AddToRoom> for ChatServer {
 
     fn handle(&mut self, msg: AddToRoom, _ctx: &mut Self::Context) -> Self::Result {
         // Get the list of WebSocket actors for the specified room
-        let room = self.rooms.entry((msg.chat_name.clone(),msg.channel_name.clone())).or_insert(HashMap::new());
+        let room = self.rooms.entry((msg.chat_name.clone(),msg.channel_name.clone())).or_default();
 
         // Add the WebSocket actor to the room
         room.insert(msg.id,WebsocketClient { addr: msg.addr });
@@ -669,12 +667,12 @@ impl Handler<ReadUpdate> for ChatServer {
 	fn handle(&mut self, msg: ReadUpdate, _ctx: &mut Self::Context) -> Self::Result {
 		// get current read status
 		if let Some(status) = self.read_status.get(&msg.video_id) {
-			let mut pool = self.pool.get().unwrap();
+			let mut pool = self.pool.get().expect("couldn't get db connection from pool");
 
 			// change the status
 			let mut status = status.clone();
-			let previous_read_status = status[msg.donation_id as usize];
-			status[msg.donation_id as usize] = msg.is_read;
+			let previous_read_status = status[usize::try_from(msg.donation_id).expect("failed to convert donation_id")];
+			status[usize::try_from(msg.donation_id).expect("failed to convert donation_id")] = msg.is_read;
 			self.read_status.insert(msg.video_id.clone(), status.clone());
 			
 
@@ -695,7 +693,7 @@ impl Handler<ReadUpdate> for ChatServer {
 
 			std::thread::spawn(move || {
 			{ // own namespace to prevent overlap of id variable names
-				use crate::schema::read_status_change_log::dsl::*;
+				use crate::schema::read_status_change_log::dsl::{channel, donation_id, new_status, previous_status, read_status_change_log, timestamp, username, video_id};
 	
 				// log change to read_status_change_log
 				// need: timestamp, username, video_id, donation_id, previous_status, new_status
@@ -721,10 +719,11 @@ impl Handler<ReadUpdate> for ChatServer {
 					.expect("Error inserting into read_status_change_log");	
 			}
 			{
-				// update the database
-				let serialized = serde_json::to_string(&status).unwrap();
+				use crate::schema::video_donation_status::dsl::{id, value};
 
-				use crate::schema::video_donation_status::dsl::*;
+				// update the database
+				let serialized = serde_json::to_string(&status).expect("Error serializing read_status");
+
 				let _res = diesel::update(schema::video_donation_status::table)
 					.filter(id.eq(&msg.video_id))
 					.set( value.eq(serialized))
@@ -733,7 +732,6 @@ impl Handler<ReadUpdate> for ChatServer {
 			}});
 		} else {
 			println!("client sent update for video not cached");
-			return;
 		};
 	}
 }
@@ -747,7 +745,7 @@ impl Handler<ReadUpdate> for MyWebSocket {
 		// deserialize the message to ReadUpdateContents
 		let contents = json!({"donation_id": msg.donation_id, "is_read": msg.is_read, "status":"success", "message":"read status updated"});
 		// serialize the message to json
-		let json = serde_json::to_string(&contents).unwrap();
+		let json = serde_json::to_string(&contents).expect("Error serializing ReadUpdateContents");
 		// send the message to the client
 		ctx.text(json);
 	}
@@ -779,9 +777,10 @@ impl Handler<Authentication> for ChatServer {
 	type Result = ();
 
 	fn handle(&mut self, msg: Authentication, _ctx: &mut Self::Context) -> Self::Result {
+		use schema::session_tokens::dsl::{session_tokens, username, token};
+
 		// check if user exists in database
-		let mut conn: PooledConnection<ConnectionManager<PgConnection>> = self.pool.get().unwrap();
-		use schema::session_tokens::dsl::*;
+		let mut conn: PooledConnection<ConnectionManager<PgConnection>> = self.pool.get().expect("Error connecting to database");
 
 		let results = session_tokens
 			.filter(username.eq(&msg.username))
@@ -792,10 +791,10 @@ impl Handler<Authentication> for ChatServer {
 
 		if let Some(result) = results.first() {
 			// send the message to the client
-			msg.addr.do_send(AuthenticationToClient { exists: true, username: Some(result.username.clone()) })
+			msg.addr.do_send(AuthenticationToClient { exists: true, username: Some(result.username.clone()) });
 		} else{
 			// send the message to the client
-			msg.addr.do_send(AuthenticationToClient { exists: false, username: None })
+			msg.addr.do_send(AuthenticationToClient { exists: false, username: None });
 		}
 
 	}
@@ -808,7 +807,7 @@ impl Handler<AuthenticationToClient> for MyWebSocket {
 		self.is_user = msg.exists;
 		if msg.exists {
 			// set username
-			self.username = msg.username.unwrap().clone();
+			self.username = msg.username.expect("username should be passed when authenticated");
 
 			// send success message
 			ctx.text(json!({"status":"success","message":"authenticated"}).to_string());
@@ -839,7 +838,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWebSocket {
             Ok(ws::Message::Text(text)) => {
 				// check if it is a read update
 				if let Ok(contents) = serde_json::from_str::<ReadUpdateContents>(&text) {
-					if self.is_user == false {
+					if !self.is_user {
 						ctx.text(json!({"status":"error","message":"not authenticated"}).to_string());
 						return;
 					}
@@ -864,7 +863,7 @@ impl StreamHandler<Result<ws::Message, ws::ProtocolError>> for MyWebSocket {
             }
             Ok(ws::Message::Nop) => (),
 			Err(e) => {
-				println!("Error: {:?}",e);
+				println!("Error: {e:?}");
 				ctx.stop();
 			}
         }
@@ -902,17 +901,17 @@ impl Handler<LiveUpdate> for ChatServer {
 
 	fn handle(&mut self, msg: LiveUpdate, _ctx: &mut Self::Context) -> Self::Result {
 		// store the donation in the live_donations hashmap
-		self.live_donations.entry(msg.livestream_name.clone()).or_insert(Vec::new()).push(msg.donation.clone());
+		self.live_donations.entry(msg.livestream_name.clone()).or_default().push(msg.donation.clone());
 		// append false value to read_status
-		self.read_status.entry(msg.livestream_name.clone()).or_insert(Vec::new()).push(false);
+		self.read_status.entry(msg.livestream_name.clone()).or_default().push(false);
 
 		// get length of the vector
-		let len = self.live_donations.get(&msg.livestream_name).unwrap().len();
+		let len = self.live_donations.get(&msg.livestream_name).expect("failed to get livestream donations").len();
 
 		// send the message to all clients in the room
-		for client in self.rooms.entry((msg.livestream_name,"live".to_string())).or_insert(HashMap::new()).values() {
-			let donation = DonationTemplate{ donation: msg.donation.clone(), donation_id: (len-1) as i32}.render().expect("Failed to render donation template");
-			use minify_html::{Cfg, minify};
+		for client in self.rooms.entry((msg.livestream_name,"live".to_string())).or_default().values() {
+			let donation = DonationTemplate{ donation: msg.donation.clone(), donation_id: i32::try_from(len-1).expect("failed to convert donation_id")}.render().expect("Failed to render donation template");
+			
 			let donation = String::from_utf8(minify(donation.as_bytes(), &Cfg::default())).expect("Failed to convert to string");
 			client.addr.do_send(NewMessageForClient { donation, read_status:false });
 		}
@@ -930,18 +929,15 @@ impl Handler<StreamEnd> for ChatServer {
 
 	fn handle(&mut self, msg: StreamEnd, _ctx: &mut Self::Context) -> Self::Result {
 		// disconnect all clients in the room
-		for client in self.rooms.entry((msg.livestream_name.clone(),"live".to_string())).or_insert(HashMap::new()).values() {
+		for client in self.rooms.entry((msg.livestream_name.clone(),"live".to_string())).or_default().values() {
 			client.addr.do_send(StreamEnd { livestream_name: msg.livestream_name.clone() });
 		}
 		// print the read donations
-		match self.read_status.get(&msg.livestream_name) {
-			Some(donations) => {
-				println!("Read donations: {:?}",donations);
-			},
-			None => {
+		self.read_status.get(&msg.livestream_name).map_or_else( || {
 				println!("Read donations: 0");
-			}
-		}
+			}, |donations| {
+				println!("Read donations: {donations:?}");
+			});
 	}
 }
 
@@ -959,37 +955,38 @@ impl Handler<StreamEnd> for MyWebSocket {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
+    use std::env;
+	enum LiveDonationTypes {
+		Donation(String, DonationTypes),
+		StreamEnd(String),
+	}
+
 	/*
 	let vec = vec![true,false,true];
 	let json_res = json!(vec);
 	return Ok(()); */
 	// create a pool of database connections
 	dotenv::dotenv().ok();
-    use std::env;
     let postgres_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 	let manager = ConnectionManager::<PgConnection>::new(postgres_url);
-	let pool = Pool::builder().max_size(15).build(manager).unwrap();
+	let pool = Pool::builder().max_size(15).build(manager).expect("Failed to create database connection pool");
 	// note to self: actors will freeze when this is used uncomment reader_actor and this to see it
 	//let live_messages: Arc<Mutex<HashMap<String, Vec<DonationTypes>>>> = Arc::new(Mutex::new(HashMap::new())); 
 
-	enum LiveDonationTypes {
-		Donation(String, DonationTypes),
-		StreamEnd(String),
-	}
 
     // Create the chat server instance
     let server = ChatServer { rooms: HashMap::new(), pool: pool.clone(), read_status: HashMap::new(), live_donations: HashMap::new() }.start();
 	let (main_sender, receiver) = std::sync::mpsc::channel();
 	std::thread::spawn(move|| {
 		// create the inotify instance
-		let mut inotify = inotify::Inotify::init().unwrap();
-		inotify.watches().add("./live", inotify::WatchMask::CREATE | inotify::WatchMask::DELETE).unwrap();
+		let mut inotify = inotify::Inotify::init().expect("failed to initialize inotify");
+		inotify.watches().add("./live", inotify::WatchMask::CREATE | inotify::WatchMask::DELETE).expect("failed to add watch on ./live");
 
 		let mut buffer = [0u8; 4096];
 		loop {
-			let events = inotify.read_events_blocking(&mut buffer).unwrap();
+			let events = inotify.read_events_blocking(&mut buffer).expect("failed to read events");
 			for event in events {
-				let mut file_name = event.name.unwrap().to_str().unwrap().to_string();
+				let mut file_name = event.name.expect("failed to get file name").to_str().expect("failed to convert to str").to_string();
 				if event.mask.contains(inotify::EventMask::CREATE) {
 					// check if the file is a .donations.json file
 					// if not, ignore it
@@ -1000,8 +997,8 @@ async fn main() -> std::io::Result<()> {
 					let main_sender = main_sender.clone();
 					std::thread::spawn(move || {
 						// create another inotify instance to watch the file
-						let mut inotify = inotify::Inotify::init().unwrap();
-						inotify.watches().add(&format!("./live/{}",file_name), inotify::WatchMask::MODIFY).unwrap();
+						let mut inotify = inotify::Inotify::init().expect("failed to create inotify instance");
+						inotify.watches().add(&format!("./live/{file_name}"), inotify::WatchMask::MODIFY).expect("failed to watch file");
 
 						let mut last_pos = 0;
 						loop {
@@ -1012,32 +1009,31 @@ async fn main() -> std::io::Result<()> {
 								let mut reader = std::io::BufReader::new(file);
 
 								// seek to the last position
-								use std::io::{Seek,Read,BufRead};
-								reader.seek(std::io::SeekFrom::Start(last_pos)).unwrap();
+								reader.seek(std::io::SeekFrom::Start(last_pos)).expect("failed to seek to the last position");
 								for line in reader.by_ref().lines() {
-									let line = line.unwrap();
+									let line = line.expect("failed to read line");
 									let donation = serde_json::from_str::<DonationTypes>(&line);
-									if let Ok(donation) = donation {
+									donation.map_or_else(|_e| {
+										println!("invalid json: {line:?}");
+									}, |donation| {
 										match main_sender.send(LiveDonationTypes::Donation(file_name.clone(), donation)) {
 											Ok(_) => {},
 											Err(e) => {
-												println!("Error: {}",e);
+												println!("Error: {e}");
 											}
 										};
-									} else {
-										println!("invalid json: {:?}",line);
-									}
+									});
 								}
 
 								// get the new position
-								last_pos = reader.seek(std::io::SeekFrom::Current(0)).unwrap();
+								last_pos = reader.stream_position().expect("failed to get the new position");
 							} else {
 								break;
 							}
 
 							// block until the file is modified
 							let mut buffer = [0u8; 4096];
-							inotify.read_events_blocking(&mut buffer).unwrap();
+							inotify.read_events_blocking(&mut buffer).expect("failed to read events");
 						}
 					});
 				} else if event.mask.contains(inotify::EventMask::DELETE) {
@@ -1047,16 +1043,20 @@ async fn main() -> std::io::Result<()> {
 						continue;
 					}
 					file_name = file_name.replace(".donations.json","");
-					file_name = format!("live-{}",file_name);
-					main_sender.send(LiveDonationTypes::StreamEnd(file_name)).unwrap();
+					file_name = format!("live-{file_name}");
+					match main_sender.send(LiveDonationTypes::StreamEnd(file_name)){
+						Ok(_) => {},
+						Err(e) => {
+							println!("Error: {e}");
+						}
+					};
 				}
 			}
 		}
 	});
 	let thread_server = server.clone();
 	std::thread::spawn(move || {
-		//receive all the messages
-		let mut live_donations:HashMap<String,Vec<DonationTypes>> = HashMap::new();
+		//receive all the messages from the main thread
 		loop {
 			match receiver.recv() {
 				Ok(LiveDonationTypes::Donation(file_name, donation)) => {
@@ -1064,17 +1064,16 @@ async fn main() -> std::io::Result<()> {
 					// first trim .donations.json from the file_name
 					let file_name = file_name.trim_end_matches(".donations.json").to_string();
 					// then add live- to the file_name
-					let file_name = format!("live-{}",file_name);
-					thread_server.do_send(LiveUpdate { livestream_name: file_name.clone(), donation: donation });
+					let file_name = format!("live-{file_name}");
+					thread_server.do_send(LiveUpdate { livestream_name: file_name.clone(), donation });
 				},
 				Ok(LiveDonationTypes::StreamEnd(file_name)) => {
 					//println!("Stream ended: {}",file_name);
 					// remove the file from the live messages
 					thread_server.do_send(StreamEnd { livestream_name: file_name.clone() });
-					live_donations.remove(&file_name);
 				},
 				Err(e) => {
-					println!("Error: {}",e);
+					println!("Error: {e}");
 				}
 			}
 		}
