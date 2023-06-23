@@ -981,89 +981,76 @@ async fn main() -> std::io::Result<()> {
     let server = ChatServer { rooms: HashMap::new(), pool: pool.clone(), read_status: HashMap::new(), live_donations: HashMap::new() }.start();
 	let (main_sender, receiver) = std::sync::mpsc::channel();
 	std::thread::spawn(move|| {
-		let mut existing_files = Vec::new();
-		loop {
-			// loop over all the files in in ./live/* using the glob crate
-			let files = glob(&format!("./live/*.donations.json")).expect("Failed to read glob pattern");
-			// compare the files to the existing files
-			// for new files: add them to the live messages
-			let mut new_files = Vec::new();
-			for file in files {
-				let file = file.unwrap();
-				let file_name = file.file_name().unwrap().to_str().unwrap().to_string();
-				if existing_files.contains(&file_name) == false {
-					// add the file to the live messages
-					new_files.push(file_name);
-				}
-			}
-			// after that spawn a thread for each new file
-			for file_name in new_files {
-				let file_name_clone = file_name.clone();
-				let tx = main_sender.clone();
-				std::thread::spawn(move || {
-					let mut last_pos = 0;
-					loop {
-						// open the file
-						let file = std::fs::File::open(&format!("./live/{}",file_name_clone.clone()));
-						if let Ok(file) = file {
-							// read the file
-							let mut reader = std::io::BufReader::new(file);
+		// create the inotify instance
+		let mut inotify = inotify::Inotify::init().unwrap();
+		inotify.watches().add("./live", inotify::WatchMask::CREATE | inotify::WatchMask::DELETE).unwrap();
 
-							// seek to the last position
-							use std::io::{Seek,Read,BufRead};
-							reader.seek(std::io::SeekFrom::Start(last_pos)).unwrap();
-							for line in reader.by_ref().lines() {
-								let line = line.unwrap();
-								let donation = serde_json::from_str::<DonationTypes>(&line);
-								if let Ok(donation) = donation {
-									match tx.send(LiveDonationTypes::Donation(file_name_clone.clone(), donation)) {
-										Ok(_) => {},
-										Err(e) => {
-											println!("Error: {}",e);
-										}
-									};
-								} else {
-									println!("invalid json: {:?}",line);
+		let mut buffer = [0u8; 4096];
+		loop {
+			let events = inotify.read_events_blocking(&mut buffer).unwrap();
+			for event in events {
+				let mut file_name = event.name.unwrap().to_str().unwrap().to_string();
+				if event.mask.contains(inotify::EventMask::CREATE) {
+					// check if the file is a .donations.json file
+					// if not, ignore it
+					if !file_name.ends_with(".donations.json") {
+						continue;
+					}
+
+					let main_sender = main_sender.clone();
+					std::thread::spawn(move || {
+						// create another inotify instance to watch the file
+						let mut inotify = inotify::Inotify::init().unwrap();
+						inotify.watches().add(&format!("./live/{}",file_name), inotify::WatchMask::MODIFY).unwrap();
+
+						let mut last_pos = 0;
+						loop {
+							// open the file
+							let file = std::fs::File::open(&format!("./live/{}",file_name.clone()));
+							if let Ok(file) = file {
+								// read the file
+								let mut reader = std::io::BufReader::new(file);
+
+								// seek to the last position
+								use std::io::{Seek,Read,BufRead};
+								reader.seek(std::io::SeekFrom::Start(last_pos)).unwrap();
+								for line in reader.by_ref().lines() {
+									let line = line.unwrap();
+									let donation = serde_json::from_str::<DonationTypes>(&line);
+									if let Ok(donation) = donation {
+										match main_sender.send(LiveDonationTypes::Donation(file_name.clone(), donation)) {
+											Ok(_) => {},
+											Err(e) => {
+												println!("Error: {}",e);
+											}
+										};
+									} else {
+										println!("invalid json: {:?}",line);
+									}
 								}
+
+								// get the new position
+								last_pos = reader.seek(std::io::SeekFrom::Current(0)).unwrap();
+							} else {
+								break;
 							}
 
-
-							// get the new position
-							last_pos = reader.seek(std::io::SeekFrom::Current(0)).unwrap();
-
-							// wait 5 seconds
-						} else {
-							//println!("Error: {:?}",file);
-							// remove the file extension
-							let file_name_clone = file_name_clone.replace(".donations.json","");
-							// add live- to the file name
-							let file_name_clone = format!("live-{}",file_name_clone);
-
-							tx.send(LiveDonationTypes::StreamEnd(file_name_clone.clone())).unwrap();
-							// remove the file from the live messages
-							//live_donations.remove(&file_name_clone);
-							break;
+							// block until the file is modified
+							let mut buffer = [0u8; 4096];
+							inotify.read_events_blocking(&mut buffer).unwrap();
 						}
-
-						std::thread::sleep(std::time::Duration::from_secs(5));
+					});
+				} else if event.mask.contains(inotify::EventMask::DELETE) {
+					// check if the file is a .donations.json file
+					// if not, ignore it
+					if !file_name.ends_with(".donations.json") {
+						continue;
 					}
-				});
-				
-				// add the file to the existing files
-				existing_files.push(file_name);
-			}
-
-			// check for removed files
-			for file_name in existing_files.clone() {
-				if std::path::Path::new(&format!("./live/{file_name}")).exists() == false {
-					// remove the file from existing files
-					existing_files.retain(|x| x != &file_name);
+					file_name = file_name.replace(".donations.json","");
+					file_name = format!("live-{}",file_name);
+					main_sender.send(LiveDonationTypes::StreamEnd(file_name)).unwrap();
 				}
 			}
-
-
-			// wait 5 seconds
-			std::thread::sleep(std::time::Duration::from_secs(5));
 		}
 	});
 	let thread_server = server.clone();
