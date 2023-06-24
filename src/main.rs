@@ -953,6 +953,8 @@ impl Handler<StreamEnd> for MyWebSocket {
 }
 
 
+
+
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     use std::env;
@@ -977,6 +979,64 @@ async fn main() -> std::io::Result<()> {
     // Create the chat server instance
     let server = ChatServer { rooms: HashMap::new(), pool: pool.clone(), read_status: HashMap::new(), live_donations: HashMap::new() }.start();
 	let (main_sender, receiver) = std::sync::mpsc::channel();
+
+	// loop over all files in the live directory
+	let live_dir:Vec<_> = std::fs::read_dir("./live").expect("failed to read live directory")
+		.map(Result::unwrap)
+		.collect();
+	for file in live_dir {
+		// extract file name
+		let file_name = file.file_name().into_string().expect("failed to convert file name to string");
+		// check if it ends with .donations.json
+		// if not skip it
+		if !file_name.ends_with(".donations.json") {
+			continue;
+		}
+
+		let main_sender = main_sender.clone();
+		std::thread::spawn(move || {
+			// create another inotify instance to watch the file
+			let mut inotify = inotify::Inotify::init().expect("failed to create inotify instance");
+			inotify.watches().add(&format!("./live/{file_name}"), inotify::WatchMask::MODIFY).expect("failed to watch file");
+
+			let mut last_pos = 0;
+			loop {
+				// open the file
+				let file = std::fs::File::open(&format!("./live/{}",file_name.clone()));
+				if let Ok(file) = file {
+					// read the file
+					let mut reader = std::io::BufReader::new(file);
+
+					// seek to the last position
+					reader.seek(std::io::SeekFrom::Start(last_pos)).expect("failed to seek to the last position");
+					for line in reader.by_ref().lines() {
+						let line = line.expect("failed to read line");
+						let donation = serde_json::from_str::<DonationTypes>(&line);
+						donation.map_or_else(|_e| {
+							println!("invalid json: {line:?}");
+						}, |donation| {
+							match main_sender.send(LiveDonationTypes::Donation(file_name.clone(), donation)) {
+								Ok(_) => {},
+								Err(e) => {
+									println!("Error: {e}");
+								}
+							};
+						});
+					}
+
+					// get the new position
+					last_pos = reader.stream_position().expect("failed to get the new position");
+				} else {
+					break;
+				}
+
+				// block until the file is modified
+				let mut buffer = [0u8; 4096];
+				inotify.read_events_blocking(&mut buffer).expect("failed to read events");
+			}
+		});
+	}
+	
 	std::thread::spawn(move|| {
 		// create the inotify instance
 		let mut inotify = inotify::Inotify::init().expect("failed to initialize inotify");
@@ -987,6 +1047,7 @@ async fn main() -> std::io::Result<()> {
 			let events = inotify.read_events_blocking(&mut buffer).expect("failed to read events");
 			for event in events {
 				let mut file_name = event.name.expect("failed to get file name").to_str().expect("failed to convert to str").to_string();
+
 				if event.mask.contains(inotify::EventMask::CREATE) {
 					// check if the file is a .donations.json file
 					// if not, ignore it
