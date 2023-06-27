@@ -5,6 +5,7 @@ use actix_files as fs;
 use urlencoding::encode;
 use std::io::{Seek,Read,BufRead};
 use minify_html::{Cfg, minify};
+use interprocess::local_socket::{LocalSocketListener};
 
 use diesel::prelude::*;
 pub mod schema;
@@ -44,7 +45,7 @@ struct ChannelsTemplate {
 }
 
 #[get("/streams")]
-async fn streamers() -> impl Responder {
+async fn streamers(server: web::Data<Addr<ChatServer>>) -> impl Responder {
 	let mut out = Vec::new();
 	// loop over chats directory
 	let paths: Vec<_> = std::fs::read_dir("./chats").expect("Unable to read chat directory")
@@ -66,13 +67,12 @@ async fn streamers() -> impl Responder {
 	}
 
 	// get streams
-	let files = glob("./live/*.donations.json").expect("Failed to read glob pattern");
-	// convert to strings
-	let stream_names: Vec<String> = files.map(|r| r.expect("failed to get file").file_name().expect("failed to get filename").to_str().expect("failed to convert to str").to_string()).collect();
-	// remove file extension
-	let stream_names = stream_names.iter().map(|s| s.replace(".donations.json","")).collect::<Vec<String>>();
+	let stream_names = match server.send(GetStreams{}).await{
+		Ok(res) => res,
+		Err(_) => return HttpResponse::InternalServerError().finish(),
+	};
 	
-	let stream_names = stream_names.iter().map(|s| (s.clone() ,encode(s).into_owned())).collect::<Vec<(String,String)>>();
+	let stream_names = stream_names.iter().map(|s| s.strip_prefix("live-").expect("failed to strip prefix")).map(|s| (s.to_string() ,encode(s).into_owned())).collect::<Vec<(String,String)>>();
 
 
 	let template = ChannelsTemplate{channels: out, streams: stream_names};
@@ -250,7 +250,7 @@ struct DonationTemplate {
 }
 
 #[get("/chat/{channel_name}/{chat_name}")]
-async fn chat(path: web::Path<(String,String)>) -> impl Responder {
+async fn chat(path: web::Path<(String,String)>,server: web::Data<Addr<ChatServer>>) -> impl Responder {
 	// print chat name
 	
 	let (channel_name,chat_name) = path.into_inner();
@@ -258,18 +258,23 @@ async fn chat(path: web::Path<(String,String)>) -> impl Responder {
 
 	// if channel_name is live then chat_name is the video_name
 	if channel_name == "live" {
-		// check for chat_name.donations.json
-		let donations_file = format!("./live/{chat_name}.donations.json" );
-		if !std::path::Path::new(&donations_file).exists() {
-			return HttpResponse::NotFound().body("
-			<main>
-				<div class=\"m-2\">
-					<h1 class=\"text-2xl\">Error</h1>
-					<p>Failed to read donations file</p>
-					<p>might not exist on the server</p>
-				</div>
-			</main>");
+		// get running streams from server
+		let stream_names = match server.send(GetStreams{}).await {
+			Ok(res) => res,
+			Err(_) => return HttpResponse::InternalServerError().body("Failed to get streams from server"),
 		};
+		// check if stream exists
+		// add live- to the front of the stream name
+		if !stream_names.contains(&format!("live-{}",chat_name)) {
+			return HttpResponse::NotFound().body("<main>
+	<div class=\"m-2\">
+		<h1 class=\"text-2xl\">Error</h1>
+		<p>no stream with that name</p>
+	</div>
+</main>");
+		}
+
+		
 
 		let donations = Vec::new();
 		let donations_colors = Vec::new();
@@ -340,10 +345,6 @@ async fn ws_index(r: HttpRequest, stream: web::Payload, path: web::Path<(String,
 	// if it is live then check if file exists in live folder
 	if is_live {
 		let chat_name = chat_name.strip_prefix("live-").expect("Failed to strip prefix");
-		let donations_file = format!("./live/{chat_name}.donations.json");
-		if !std::path::Path::new(&donations_file).exists() {
-			return Ok(HttpResponse::NotFound().body("Failed to read donations file"));
-		};
 	}
 
 	let client_id = uuid::Uuid::new_v4().to_string();
@@ -659,6 +660,21 @@ struct ReadUpdate {
 	channel_name:String,
 	username:String,
 }
+
+#[derive(Message,Debug)]
+#[rtype(result = "Vec<String>")]
+struct GetStreams {
+}
+
+impl Handler<GetStreams> for ChatServer {
+	type Result = Vec<String>;
+
+	fn handle(&mut self, _msg: GetStreams, _ctx: &mut Self::Context) -> Self::Result {
+		// return keys of self.live_donations
+		self.live_donations.keys().cloned().collect()
+	}
+}
+
 
 // implement a message handler for the server actor
 impl Handler<ReadUpdate> for ChatServer {
@@ -1036,83 +1052,41 @@ async fn main() -> std::io::Result<()> {
 			}
 		});
 	}
-	
+	let m_sender = main_sender.clone();
 	std::thread::spawn(move|| {
-		// create the inotify instance
-		let mut inotify = inotify::Inotify::init().expect("failed to initialize inotify");
-		inotify.watches().add("./live", inotify::WatchMask::CREATE | inotify::WatchMask::DELETE).expect("failed to add watch on ./live");
+		let listener = match LocalSocketListener::bind("@live_donations") {
+			Err(e) if e.kind() == std::io::ErrorKind::AddrInUse => {
+				println!("Error address already in use: {}", e);
+				return;
+			},
+			x => x.unwrap(),
+		};
+		let mut status:HashMap<String, i32> = HashMap::new();
+		for connection in listener.incoming() {
+			let mut connection = connection.unwrap();
+			// Receive the message on the server
+			let mut buffer = Vec::new();
+			let bytes_read = connection.read_to_end(&mut buffer).unwrap();
+			let received_message = String::from_utf8_lossy(&buffer[..bytes_read]);
+			//println!("Received message: {}", received_message);
+			// first line is the stream name
+			let mut lines = received_message.lines();
+			let stream_name = lines.next().unwrap();
 
-		let mut buffer = [0u8; 4096];
-		loop {
-			let events = inotify.read_events_blocking(&mut buffer).expect("failed to read events");
-			for event in events {
-				let mut file_name = event.name.expect("failed to get file name").to_str().expect("failed to convert to str").to_string();
+			let read_status = status.entry(stream_name.to_string()).or_insert(0);
+			// lines after that are the donations
+			let donations:Vec<_> = lines.skip(*read_status as usize).map(|line| {
+				serde_json::from_str::<DonationTypes>(line).unwrap()
+			}).collect();
 
-				if event.mask.contains(inotify::EventMask::CREATE) {
-					// check if the file is a .donations.json file
-					// if not, ignore it
-					if !file_name.ends_with(".donations.json") {
-						continue;
-					}
-
-					let main_sender = main_sender.clone();
-					std::thread::spawn(move || {
-						// create another inotify instance to watch the file
-						let mut inotify = inotify::Inotify::init().expect("failed to create inotify instance");
-						inotify.watches().add(&format!("./live/{file_name}"), inotify::WatchMask::MODIFY).expect("failed to watch file");
-
-						let mut last_pos = 0;
-						loop {
-							// open the file
-							let file = std::fs::File::open(&format!("./live/{}",file_name.clone()));
-							if let Ok(file) = file {
-								// read the file
-								let mut reader = std::io::BufReader::new(file);
-
-								// seek to the last position
-								reader.seek(std::io::SeekFrom::Start(last_pos)).expect("failed to seek to the last position");
-								for line in reader.by_ref().lines() {
-									let line = line.expect("failed to read line");
-									let donation = serde_json::from_str::<DonationTypes>(&line);
-									donation.map_or_else(|_e| {
-										println!("invalid json: {line:?}");
-									}, |donation| {
-										match main_sender.send(LiveDonationTypes::Donation(file_name.clone(), donation)) {
-											Ok(_) => {},
-											Err(e) => {
-												println!("Error: {e}");
-											}
-										};
-									});
-								}
-
-								// get the new position
-								last_pos = reader.stream_position().expect("failed to get the new position");
-							} else {
-								break;
-							}
-
-							// block until the file is modified
-							let mut buffer = [0u8; 4096];
-							inotify.read_events_blocking(&mut buffer).expect("failed to read events");
-						}
-					});
-				} else if event.mask.contains(inotify::EventMask::DELETE) {
-					// check if the file is a .donations.json file
-					// if not, ignore it
-					if !file_name.ends_with(".donations.json") {
-						continue;
-					}
-					file_name = file_name.replace(".donations.json","");
-					file_name = format!("live-{file_name}");
-					match main_sender.send(LiveDonationTypes::StreamEnd(file_name)){
-						Ok(_) => {},
-						Err(e) => {
-							println!("Error: {e}");
-						}
-					};
-				}
-			}
+			// print the donations
+			println!("stream name: {stream_name}");
+				
+			for donation in donations {
+				m_sender.send(LiveDonationTypes::Donation(stream_name.to_string(), donation)).unwrap();
+				// increment the read_status
+				*read_status += 1;
+			};	
 		}
 	});
 	let thread_server = server.clone();
