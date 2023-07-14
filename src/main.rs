@@ -1,5 +1,6 @@
 use actix_web::{get, post, App, web, HttpResponse, HttpServer, Responder};
 use askama_actix::{Template,TemplateToResponse};
+use diesel::expression::is_aggregate::No;
 use glob::glob;
 use actix_files as fs;
 use urlencoding::encode;
@@ -893,7 +894,7 @@ use diesel::r2d2::{ConnectionManager, Pool, PooledConnection};
 #[rtype(result = "()")]
 struct LiveUpdate {
 	livestream_name: String,
-	donation: DonationTypes,
+	donation: Option<DonationTypes>,
 }
 
 #[derive(Message)]
@@ -916,8 +917,18 @@ impl Handler<LiveUpdate> for ChatServer {
 	type Result = ();
 
 	fn handle(&mut self, msg: LiveUpdate, _ctx: &mut Self::Context) -> Self::Result {
+		let donation = match msg.donation {
+			Some(donation) => donation,
+			None => {
+				// initialize the live_donations hashmap and read_status vector
+				self.live_donations.entry(msg.livestream_name.clone()).or_default();
+				self.read_status.entry(msg.livestream_name.clone()).or_default();
+				return;
+			},
+		};
+
 		// store the donation in the live_donations hashmap
-		self.live_donations.entry(msg.livestream_name.clone()).or_default().push(msg.donation.clone());
+		self.live_donations.entry(msg.livestream_name.clone()).or_default().push(donation.clone());
 		// append false value to read_status
 		self.read_status.entry(msg.livestream_name.clone()).or_default().push(false);
 
@@ -926,7 +937,7 @@ impl Handler<LiveUpdate> for ChatServer {
 
 		// send the message to all clients in the room
 		for client in self.rooms.entry((msg.livestream_name,"live".to_string())).or_default().values() {
-			let donation = DonationTemplate{ donation: msg.donation.clone(), donation_id: i32::try_from(len-1).expect("failed to convert donation_id")}.render().expect("Failed to render donation template");
+			let donation = DonationTemplate{ donation: donation.clone(), donation_id: i32::try_from(len-1).expect("failed to convert donation_id")}.render().expect("Failed to render donation template");
 			
 			let donation = String::from_utf8(minify(donation.as_bytes(), &Cfg::default())).expect("Failed to convert to string");
 			client.addr.do_send(NewMessageForClient { donation, read_status:false });
@@ -954,6 +965,10 @@ impl Handler<StreamEnd> for ChatServer {
 			}, |donations| {
 				println!("Read donations: {donations:?}");
 			});
+		// remove the donations from the hashmap
+		self.live_donations.remove(&msg.livestream_name);
+		// remove the read_status from the hashmap
+		self.read_status.remove(&msg.livestream_name);
 	}
 }
 
@@ -975,7 +990,7 @@ impl Handler<StreamEnd> for MyWebSocket {
 async fn main() -> std::io::Result<()> {
     use std::env;
 	enum LiveDonationTypes {
-		Donation(String, DonationTypes),
+		Donation(String, Option<DonationTypes>),
 		StreamEnd(String),
 	}
 
@@ -1005,6 +1020,7 @@ async fn main() -> std::io::Result<()> {
 			},
 			x => x.unwrap(),
 		};
+		println!("Listening for live donations on @live_donations");
 		let mut status:HashMap<String, i32> = HashMap::new();
 		for connection in listener.incoming() {
 			let mut connection = connection.unwrap();
@@ -1016,18 +1032,23 @@ async fn main() -> std::io::Result<()> {
 			// first line is the stream name
 			let mut lines = received_message.lines();
 			let stream_name = lines.next().unwrap();
+			if stream_name == "streamend" {
+				m_sender.send(LiveDonationTypes::StreamEnd(lines.next().unwrap().to_string())).unwrap();
+				continue;
+			}
 
-			let read_status = status.entry(stream_name.to_string()).or_insert(0);
+			let read_status = status.entry(stream_name.to_string()).or_insert({
+				m_sender.send(LiveDonationTypes::Donation(stream_name.to_string(), None)).unwrap();
+				0
+			});
 			// lines after that are the donations
 			let donations:Vec<_> = lines.skip(*read_status as usize).map(|line| {
 				serde_json::from_str::<DonationTypes>(line).unwrap()
 			}).collect();
-
-			// print the donations
-			//println!("stream name: {stream_name}");
-				
+			
+			// add the donations to the live donations
 			for donation in donations {
-				m_sender.send(LiveDonationTypes::Donation(stream_name.to_string(), donation)).unwrap();
+				m_sender.send(LiveDonationTypes::Donation(stream_name.to_string(), Some(donation))).unwrap();
 				// increment the read_status
 				*read_status += 1;
 			};	
@@ -1047,8 +1068,9 @@ async fn main() -> std::io::Result<()> {
 					thread_server.do_send(LiveUpdate { livestream_name: file_name.clone(), donation });
 				},
 				Ok(LiveDonationTypes::StreamEnd(file_name)) => {
-					//println!("Stream ended: {}",file_name);
+					println!("Stream ended: {}",file_name);
 					// remove the file from the live messages
+					let file_name = format!("live-{file_name}");
 					thread_server.do_send(StreamEnd { livestream_name: file_name.clone() });
 				},
 				Err(e) => {

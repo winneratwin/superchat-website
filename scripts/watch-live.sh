@@ -4,10 +4,12 @@ OUTPUT_FILE=~/rust/superchat-extractor-web/live/$( basename "$STREAMCHAT" .live_
 inotifywait -m -e modify,move_self "$STREAMCHAT" --format="%e %w%f"|
 while read -r event_name file_name;
 do 
+  #echo "Event: $event_name on $file_name"
   case "$event_name" in
     MOVE_SELF)
       #echo "Moved from $file_name"
       echo "stream ended"
+      superchat-extractor --file "$STREAMCHAT" --end
       ;;
     MODIFY)
       #echo "Modified $file_name"
