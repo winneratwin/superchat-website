@@ -16,11 +16,12 @@ do
 		#echo "Donations already extracted from $chat_log"
 		# head the file to preview it
 		#head -n 1 -- "$videoid/$filename.donations.json"
-		continue
+		#continue
+		echo ""
 	fi
 	echo "Extracting donations from $chat_log"
 	echo "video id: $videoid"
 	echo "stream name: $filename"
 
-	superchat-extractor --file "$chat_log" 2> "$videoid/$filename.donations.json"
+	superchat-extractor --file "$chat_log" --dontprint --outputfile "$videoid/$filename.donations.json"
 done
